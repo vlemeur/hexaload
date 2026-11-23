@@ -16,6 +16,4 @@ uv lock            # one-time: produce uv.lock (network access)
 uv sync --locked   # reproducible environment
 just setup         # sync + install Git hooks
 just check         # the single lint gate: prek run --all-files
-just test          # offline test suite
-just all           # tests + all hooks
 ```

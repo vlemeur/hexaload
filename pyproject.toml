@@ -31,20 +31,21 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
-[tool.ty.src]
-include = ["hexaload", "tests"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-
-[tool.coverage.run]
-source = ["src/hexaload"]
-# Network-only code: not covered by the offline test suite (data/fetch.py talks
-# to the RTE open data API and weather providers) — mock it before measuring.
-omit = ["*/data/fetch.py"]
-
-[tool.coverage.report]
-show_missing = true
+# Re-enabled as code and tests land:
+# [tool.ty.src]
+# include = ["hexaload", "tests"]
+#
+# [tool.pytest.ini_options]
+# testpaths = ["tests"]
+#
+# [tool.coverage.run]
+# source = ["src/hexaload"]
+# # Network-only code, not covered by the offline suite — mock it before
+# # measuring:
+# omit = ["*/data/fetch.py"]
+#
+# [tool.coverage.report]
+# show_missing = true
 
 [dependency-groups]
 dev = [
