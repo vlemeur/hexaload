@@ -49,6 +49,30 @@ def test_aggregate_hourly_filters_and_averages(raw_df: pd.DataFrame):
     assert row["prevision_j1"] == pytest.approx((49550 + 48300) / 2)
 
 
+def test_aggregate_hourly_unions_both_natures():
+    clean = pd.DataFrame(
+        {
+            "date_heure": [
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:30:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+            ],
+            "perimetre": ["France", "France", "Corse"],
+            "nature": [
+                "Données définitives",
+                "Données consolidées",
+                "Données définitives",
+            ],
+            "consommation": [10.0, 20.0, 999.0],
+            "prevision_j1": [1.0, 2.0, 5.0],
+            "prevision_j": [1.0, 2.0, 5.0],
+        }
+    )
+    hourly = aggregate_hourly(clean)
+    assert len(hourly) == 1  # Corse filtered out, both natures kept
+    assert hourly.iloc[0]["consommation"] == pytest.approx(15.0)
+
+
 def test_build_hourly_dataset_end_to_end(raw_df: pd.DataFrame):
     hourly, report = build_hourly_dataset(raw_df)
     assert report.valid_rows == 3

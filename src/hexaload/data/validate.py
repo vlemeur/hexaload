@@ -20,7 +20,9 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 logger = logging.getLogger(__name__)
 
 DEFAULT_PERIMETRE = "France"
-DEFAULT_NATURE = "Données définitives"
+# Union of both natures for continuity (phase-2 audit): "Données définitives"
+# covers 2012→2025-12, "Données consolidées" covers 2025-12→M-1.
+DEFAULT_NATURES = ("Données définitives", "Données consolidées")
 
 
 class Eco2mixRecord(BaseModel):
@@ -61,15 +63,54 @@ class Eco2mixRecord(BaseModel):
         return int(v)
 
 
+# Continuous variables: spatially averaged (mean) per hour.
+WEATHER_VARS_MEAN = (
+    "temperature_2m",
+    "apparent_temperature",
+    "relative_humidity_2m",
+    "pressure_msl",
+    "precipitation",
+    "wind_speed_10m",
+    "shortwave_radiation",
+    "cloud_cover",
+    "is_day",
+)
+# Categorical variable: majority vote (mode) per hour.
+WEATHER_VARS_MODE = ("weather_code",)
+WEATHER_UNITS = {
+    "temperature_2m": "c",
+    "apparent_temperature": "c",
+    "relative_humidity_2m": "pct",
+    "pressure_msl": "hpa",
+    "precipitation": "mm",
+    "wind_speed_10m": "ms",
+    "shortwave_radiation": "wm2",
+    "cloud_cover": "pct",
+    "is_day": "fraction",
+    "weather_code": "code",
+}
+WEATHER_FLOAT_VARS = WEATHER_VARS_MEAN
+WEATHER_INT_VARS = WEATHER_VARS_MODE + ("is_day",)
+
+
 class WeatherRecord(BaseModel):
-    """One archived forecast grid point (hourly temperature_2m), strictly typed."""
+    """One archived forecast grid point (hourly weather vars), strictly typed."""
 
     model_config = ConfigDict(extra="forbid")
 
     time: datetime
     latitude: float
     longitude: float
-    temperature_2m: float | None
+    temperature_2m: float | None = None
+    apparent_temperature: float | None = None
+    relative_humidity_2m: float | None = None
+    pressure_msl: float | None = None
+    precipitation: float | None = None
+    wind_speed_10m: float | None = None
+    shortwave_radiation: float | None = None
+    cloud_cover: float | None = None
+    is_day: int | None = None
+    weather_code: int | None = None
     model: str
 
     @field_validator("time", mode="before")
@@ -81,7 +122,7 @@ class WeatherRecord(BaseModel):
             return dt.replace(tzinfo=UTC)
         return dt
 
-    @field_validator("temperature_2m", mode="before")
+    @field_validator(*WEATHER_FLOAT_VARS, mode="before")
     @classmethod
     def _coerce_optional_float(cls, v: Any) -> Any:
         if v is None or (isinstance(v, float) and math.isnan(v)):
@@ -89,6 +130,17 @@ class WeatherRecord(BaseModel):
         if isinstance(v, str) and not v.strip():
             return None
         return float(v)
+
+    @field_validator(*WEATHER_INT_VARS, mode="before")
+    @classmethod
+    def _coerce_optional_int(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        if isinstance(v, str):
+            return int(float(v))
+        return int(v)
 
 
 @dataclass
@@ -138,13 +190,14 @@ def aggregate_hourly(
     clean: pd.DataFrame,
     *,
     perimetre: str = DEFAULT_PERIMETRE,
-    nature: str = DEFAULT_NATURE,
+    natures: tuple[str, ...] = DEFAULT_NATURES,
 ) -> pd.DataFrame:
-    """Filter to a perimeter/nature and aggregate the 30-min series to hourly.
+    """Filter to a perimeter/natures and aggregate the 30-min series to hourly.
 
-    UTC hourly means of the MW values; NaN where the source had nulls.
+    UTC hourly means of the MW values; NaN where the source had nulls
+    (consommation is only published on :00/:30, forecasts on every quarter).
     """
-    mask = (clean["perimetre"] == perimetre) & (clean["nature"] == nature)
+    mask = (clean["perimetre"] == perimetre) & clean["nature"].isin(natures)
     sub = clean.loc[mask].copy()
     sub["date_heure"] = pd.to_datetime(sub["date_heure"], utc=True)
     sub = sub.set_index("date_heure").sort_index()
@@ -153,11 +206,26 @@ def aggregate_hourly(
     return hourly
 
 
-def aggregate_temperature_national(clean: pd.DataFrame) -> pd.DataFrame:
-    """Simple mean of temperature_2m over the grid, per UTC hour."""
+def _mode_or_none(s: pd.Series) -> Any:
+    m = s.dropna().mode()
+    return int(m.iloc[0]) if len(m) else None
+
+
+def aggregate_weather_national(clean: pd.DataFrame) -> pd.DataFrame:
+    """National per-UTC-hour aggregation over the grid.
+
+    Continuous variables: simple mean. ``weather_code``: majority (mode).
+    """
     sub = clean.copy()
     sub["time"] = pd.to_datetime(sub["time"], utc=True)
-    hourly = sub.groupby("time")["temperature_2m"].mean().to_frame("temperature_2m_c")
+    mean_vars = [c for c in WEATHER_VARS_MEAN if c in sub.columns]
+    hourly = sub.groupby("time")[mean_vars].mean()
+    hourly.columns = [f"{c}_{WEATHER_UNITS[c]}" for c in mean_vars]
+    for var in WEATHER_VARS_MODE:
+        if var in sub.columns:
+            hourly[f"{var}_{WEATHER_UNITS[var]}"] = sub.groupby("time")[var].agg(
+                _mode_or_none
+            )
     hourly.index.name = "date_heure_utc"
     return hourly.sort_index()
 
@@ -166,16 +234,16 @@ def build_hourly_dataset(
     raw: pd.DataFrame,
     *,
     perimetre: str = DEFAULT_PERIMETRE,
-    nature: str = DEFAULT_NATURE,
+    natures: tuple[str, ...] = DEFAULT_NATURES,
 ) -> tuple[pd.DataFrame, ValidationReport]:
     """Full pipeline: validate raw eco2mix records, then aggregate to hourly UTC."""
     clean, report = validate_raw(raw)
-    return aggregate_hourly(clean, perimetre=perimetre, nature=nature), report
+    return aggregate_hourly(clean, perimetre=perimetre, natures=natures), report
 
 
 def build_weather_dataset(
     raw: pd.DataFrame,
 ) -> tuple[pd.DataFrame, ValidationReport]:
-    """Full pipeline: validate raw forecast records, then national hourly mean."""
+    """Full pipeline: validate raw forecast records, then national hourly means."""
     clean, report = validate_weather(raw)
-    return aggregate_temperature_national(clean), report
+    return aggregate_weather_national(clean), report

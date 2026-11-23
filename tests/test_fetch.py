@@ -1,6 +1,7 @@
 """Tests for hexaload.data.fetch — offline: HTTP mocked, cache in tmp_path."""
 
 import json
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -16,12 +17,29 @@ from hexaload.data.fetch import (
 )
 
 
-def _fake_response(payload: dict) -> requests.Response:
+def _fake_response(
+    payload: dict, status: int = 200, headers: dict | None = None
+) -> requests.Response:
     response = requests.Response()
-    response.status_code = 200
+    response.status_code = status
     response._content = json.dumps(payload).encode()
-    response.headers["Content-Type"] = "application/json"
+    response.headers.update({"Content-Type": "application/json", **(headers or {})})
     return response
+
+
+def _client_with_responses(monkeypatch, responses: list[requests.Response]):
+    client = fetch.HttpClient(min_interval_s=0.0)
+    state = {"n": 0}
+
+    def fake_get(url, params=None, timeout=None):
+        response = responses[min(state["n"], len(responses) - 1)]
+        state["n"] += 1
+        return response
+
+    monkeypatch.setattr(client.session, "get", fake_get)
+    sleeps: list[float] = []
+    monkeypatch.setattr(fetch.time, "sleep", sleeps.append)
+    return client, sleeps
 
 
 def _mock_session_get(
@@ -91,6 +109,58 @@ def test_fetch_dataset_skips_cached_months(tmp_path, monkeypatch):
 def test_read_cache_empty_raises(tmp_path):
     with pytest.raises(FetchError):
         read_cache("nope", tmp_path)
+
+
+def test_429_waits_retry_after_delta(monkeypatch):
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"error": True}, status=429, headers={"Retry-After": "0.01"}
+            ),
+            _fake_response({"ok": True}),
+        ],
+    )
+    assert client.get_json("x", {}) == {"ok": True}
+    assert sleeps[0] <= 1.0  # Retry-After is a delta: must not sleep an epoch
+
+
+def test_throttle_waits_proactively_when_quota_runs_low(monkeypatch):
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"ok": 1},
+                headers={
+                    "X-RateLimit-Remaining": "1",
+                    "X-RateLimit-Limit": "100",
+                    "X-RateLimit-Reset": str(time.time() + 2),
+                },
+            ),
+            _fake_response({"ok": 2}),
+        ],
+    )
+    assert client.get_json("a", {}) == {"ok": 1}
+    assert client.get_json("b", {}) == {"ok": 2}
+    # the second call must have waited for the reset window (~3s), not 0s
+    assert any(s > 1.5 for s in sleeps)
+
+
+def test_429_rate_limit_reset_is_epoch_not_delta(monkeypatch):
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"error": True},
+                status=429,
+                headers={"X-RateLimit-Reset": str(time.time() + 0.01)},
+            ),
+            _fake_response({"ok": True}),
+        ],
+    )
+    assert client.get_json("x", {}) == {"ok": True}
+    # misreading the epoch as a delta would sleep ~1.8e9 s here
+    assert max(sleeps) < 5
 
 
 def test_fetch_dataset_progress_bar_smoke(tmp_path, monkeypatch):

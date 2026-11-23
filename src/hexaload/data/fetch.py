@@ -41,10 +41,17 @@ MIN_REQUEST_INTERVAL_S = 1.0
 # Open-Meteo Historical Forecast API (archived forecasts, replayed as-of date).
 OPENMETEO_BASE = "https://historical-forecast-api.open-meteo.com/v1"
 OPENMETEO_MODEL = "icon_eu"  # frozen on purpose: a benchmark must be reproducible
+# All hourly variables relevant to electricity load (heating/cooling, lighting,
+# weather regimes). Frozen list: a benchmark must be reproducible.
+OPENMETEO_HOURLY = (
+    "temperature_2m,apparent_temperature,relative_humidity_2m,pressure_msl,"
+    "precipitation,wind_speed_10m,shortwave_radiation,cloud_cover,"
+    "weather_code,is_day"
+)
 GRID_STEP_DEG = 1.0
 GRID_LAT_RANGE = (41.5, 51.5)  # metropolitan France, inclusive
 GRID_LON_RANGE = (-5.0, 8.0)
-POINTS_PER_REQUEST = 50
+POINTS_PER_REQUEST = 100  # tested OK on the API; halves the request count
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -55,6 +62,22 @@ USER_AGENT = (
 
 class FetchError(RuntimeError):
     """A remote call failed after all retries, or the cache is missing."""
+
+
+def _rate_limit_wait_s(response: requests.Response) -> float:
+    """Seconds to wait after a 429.
+
+    Prefer the standard ``Retry-After`` delta; fall back to
+    ``X-RateLimit-Reset``, which on these APIs is an absolute epoch
+    timestamp, NOT a delta (misreading it sleeps for decades).
+    """
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is not None:
+        return max(float(retry_after), 1.0)
+    reset = float(response.headers.get("X-RateLimit-Reset", "5"))
+    if reset > 1e9:  # absolute epoch timestamp
+        return max(reset - time.time(), 1.0)
+    return max(reset, 1.0)
 
 
 class HttpClient:
@@ -74,6 +97,10 @@ class HttpClient:
         self.session = requests.Session()
         self.session.headers["User-Agent"] = user_agent
         self._last_request_at = 0.0
+        # server rate-limit state, read from response headers
+        self._rl_limit = 0
+        self._rl_remaining: int | None = None
+        self._rl_reset: float | None = None
 
     def get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}/{path.lstrip('/')}"
@@ -84,10 +111,41 @@ class HttpClient:
         return response.json()
 
     def _throttle(self) -> None:
+        # Proactively honour the server rate limit: when the remaining quota
+        # runs low, wait for the reset window instead of eating a 429.
+        if (
+            self._rl_remaining is not None
+            and self._rl_limit > 0
+            and self._rl_remaining < max(2, int(0.1 * self._rl_limit))
+            and self._rl_reset is not None
+        ):
+            wait = self._rl_reset - time.time() + 1.0
+            if wait > 0:
+                logger.info(
+                    "rate limit low (%d/%d left), waiting %.0fs",
+                    self._rl_remaining,
+                    self._rl_limit,
+                    wait,
+                )
+                time.sleep(wait)
         elapsed = time.monotonic() - self._last_request_at
         if elapsed < self.min_interval_s:
             time.sleep(self.min_interval_s - elapsed)
         self._last_request_at = time.monotonic()
+
+    def _store_rate_limit_headers(self, response: requests.Response) -> None:
+        try:
+            self._rl_limit = int(response.headers.get("X-RateLimit-Limit", "0"))
+        except ValueError:
+            self._rl_limit = 0
+        try:
+            self._rl_remaining = int(response.headers.get("X-RateLimit-Remaining", ""))
+        except ValueError:
+            self._rl_remaining = None
+        try:
+            self._rl_reset = float(response.headers.get("X-RateLimit-Reset", ""))
+        except ValueError:
+            self._rl_reset = None
 
     def _get_with_retry(self, url: str, params: dict[str, Any]) -> requests.Response:
         @retry(
@@ -99,12 +157,11 @@ class HttpClient:
         def _do() -> requests.Response:
             self._throttle()
             response = self.session.get(url, params=params, timeout=self.timeout_s)
+            self._store_rate_limit_headers(response)
             if response.status_code == 429:
-                reset = float(response.headers.get("X-RateLimit-Reset", "5"))
-                logger.warning(
-                    "429 on %s; honouring X-RateLimit-Reset=%.0fs", url, reset
-                )
-                time.sleep(reset)
+                wait = _rate_limit_wait_s(response)
+                logger.warning("429 on %s; waiting %.0fs", url, wait)
+                time.sleep(wait)
             if response.status_code >= 400:
                 logger.error(
                     "HTTP %s on %s: %s",
@@ -268,18 +325,20 @@ def fetch_openmeteo_month(
     end: datetime,
     *,
     model: str = OPENMETEO_MODEL,
+    hourly: str = OPENMETEO_HOURLY,
 ) -> list[dict[str, Any]]:
-    """Fetch hourly ``temperature_2m`` archived forecasts for [start, end) UTC.
+    """Fetch hourly archived forecasts for [start, end) UTC, one packet of points.
 
+    Variables come from ``hourly`` (comma-separated Open-Meteo hourly vars).
     Open-Meteo's ``end_date`` is inclusive; with ``timezone=UTC`` the returned
-    times are UTC. One request per packet of grid points.
+    times are UTC.
     """
     params: dict[str, Any] = {
         "latitude": ",".join(f"{lat:.4f}" for lat, _ in points),
         "longitude": ",".join(f"{lon:.4f}" for _, lon in points),
         "start_date": start.date().isoformat(),
         "end_date": (end - timedelta(days=1)).date().isoformat(),
-        "hourly": "temperature_2m",
+        "hourly": hourly,
         "models": model,
         "timezone": "UTC",
     }
@@ -288,18 +347,19 @@ def fetch_openmeteo_month(
         payload = [payload]
     records: list[dict[str, Any]] = []
     for point in payload:
-        times = point.get("hourly", {}).get("time", [])
-        temps = point.get("hourly", {}).get("temperature_2m", [])
-        for t, temp in zip(times, temps, strict=True):
-            records.append(
-                {
-                    "time": t,
-                    "latitude": point.get("latitude"),
-                    "longitude": point.get("longitude"),
-                    "temperature_2m": temp,
-                    "model": model,
-                }
-            )
+        hourly_data = point.get("hourly", {})
+        times = hourly_data.get("time", [])
+        var_keys = [k for k in hourly_data if k != "time"]
+        for i, t in enumerate(times):
+            record: dict[str, Any] = {
+                "time": t,
+                "latitude": point.get("latitude"),
+                "longitude": point.get("longitude"),
+                "model": model,
+            }
+            for key in var_keys:
+                record[key] = hourly_data[key][i]
+            records.append(record)
     return records
 
 

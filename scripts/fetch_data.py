@@ -24,8 +24,10 @@ from hexaload.data.fetch import (
 from hexaload.data.validate import build_hourly_dataset, build_weather_dataset
 
 DEFAULT_START = {
-    "eco2mix": "2012-02-22",  # first eco2mix-national-cons-def record
-    "openmeteo": "2016-01-01",  # first archived forecast on Open-Meteo
+    # selecting 2023 as start date for both consumption and meteo data
+    # so that both are consistent
+    "eco2mix": "2023-01-01",
+    "openmeteo": "2023-01-01",
 }
 
 
