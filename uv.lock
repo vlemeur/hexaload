@@ -622,6 +622,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "requests" },
+    { name = "sktime" },
     { name = "tenacity" },
     { name = "tqdm" },
 ]
@@ -644,6 +645,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=18.0.0" },
     { name = "pydantic", specifier = ">=2.14.3" },
     { name = "requests", specifier = ">=2.34.2" },
+    { name = "sktime", specifier = ">=0.38" },
     { name = "tenacity", specifier = ">=9.2.1" },
     { name = "tqdm", specifier = ">=4.70.1" },
 ]
@@ -2193,6 +2195,15 @@ wheels = [
 ]
 
 [[package]]
+name = "scikit-base"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/e9/287707e71be93558076d873f92444fa788c1a11c259982a1967ad2071b0e/scikit_base-1.2.1.tar.gz", hash = "sha256:6cccfab1cf51e36141b731fe3248bd3c1a55361e965ddc7457be75ad8a9803eb", size = 136836, upload-time = "2026-11-08T20:24:26.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/b4/21adac81fbb522bdbb74c4809c7ea06fbde847a24c54b68dfed1519ff3dc/scikit_base-1.2.1-py3-none-any.whl", hash = "sha256:8695538dcf61c5439752b56baeca9d4ce52de012ddc4cee50ee67c910a9b5fb9", size = 163886, upload-time = "2026-11-08T20:24:25.324Z" },
+]
+
+[[package]]
 name = "scikit-learn"
 version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2319,6 +2330,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/22/f6/4bcaf620df6ce360e04ae177cd1586e15e5e30a19a2edff5edca343fc70a/skrub-0.11.0.tar.gz", hash = "sha256:97e986f56a82d9e071aff566c10099827fbaee4959451b61f9bdaf71c3ad6c6d", size = 4234421, upload-time = "2026-10-01T10:03:07.232Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/a4/cc5181b3f29e3a9db8fd5c4bde79358d7833ae9aeb53b61f9631ef8d5a54/skrub-0.11.0-py3-none-any.whl", hash = "sha256:9cf5bda8c5d35ec3b9669a451b1ae03a5789b5f8cd328f2df224b115fa9fe931", size = 802731, upload-time = "2026-10-01T10:03:02.596Z" },
+]
+
+[[package]]
+name = "sktime"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "joblib" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pandas" },
+    { name = "scikit-base" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/6e/8a7d197cd558fcaf6299fbce6855d4d6b151f4e641ff945d26ffa8422f43/sktime-1.3.0.tar.gz", hash = "sha256:827d722492217792e0c9c79a4f6ecd15ee0194ae638c6b5f0ef69c767ebbc16f", size = 36480780, upload-time = "2026-11-08T23:46:54.029Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/5c/cb4525471ad26d513c3ee294a6290999b7c5f90bfd21c6f7a8249b5c52c2/sktime-1.3.0-py3-none-any.whl", hash = "sha256:8c760156fd0f4605307a912844fa8831a6d6e860f46075f984de20e01cecf089", size = 8318494, upload-time = "2026-11-08T23:46:51.197Z" },
 ]
 
 [[package]]
