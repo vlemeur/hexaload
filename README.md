@@ -2,8 +2,7 @@
 
 [![CI](https://github.com/vlemeur/hexaload/actions/workflows/ci.yml/badge.svg)](https://github.com/vlemeur/hexaload/actions/workflows/ci.yml)
 
-A benchmark of national French electricity load forecasting on RTE's
-[eco2mix](https://www.rte-france.com/en/eco2mix) open data (consolidated)
+A benchmark of national French electricity load forecasting on RTE's open data (consolidated)
 
 
 ## Layout
