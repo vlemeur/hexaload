@@ -51,5 +51,36 @@ jobs:
         run: uv run --locked prek run end-of-file-fixer --all-files
       - name: trim trailing whitespace
         run: uv run --locked prek run trailing-whitespace --all-files
-      # The pytest job returns with the first tests (phase 3): fully offline
-      # suite + coverage artifacts (coverage.xml, htmlcov/).
+
+  pytest:
+    name: pytest — test suite (local, no network)
+    # Same pinned runner as the prek job (see above).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      # Reproducible environment: Python pinned by .python-version (3.14),
+      # dependencies pinned by uv.lock (--locked fails if the lock is stale).
+      - name: Sync locked environment
+        run: uv sync --locked
+      # The suite is fully offline: fixtures are built in-memory, HTTP is
+      # mocked, cache files are written to tmp_path. Exit code 5 ("no tests
+      # collected") is tolerated so an empty tests/ never breaks the build.
+      - name: Run tests with coverage
+        run: |
+          uv run --locked pytest --cov --cov-report=term-missing --cov-report=xml:coverage.xml --cov-report=html:htmlcov
+          code=$?
+          if [ "$code" -ne 0 ] && [ "$code" -ne 5 ]; then exit "$code"; fi
+      # Downloadable from the run's "Artifacts" section: coverage.xml (for
+      # external reporters) + htmlcov/ (browsable line-by-line report).
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: error
+          retention-days: 30

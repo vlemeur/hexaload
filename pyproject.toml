@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.14.3",
     "requests>=2.34.2",
     "tenacity>=9.2.1",
+    "tqdm>=4.70.1",
 ]
 
 [build-system]
@@ -31,21 +32,18 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
-# Re-enabled as code and tests land:
-# [tool.ty.src]
-# include = ["hexaload", "tests"]
-#
-# [tool.pytest.ini_options]
-# testpaths = ["tests"]
-#
-# [tool.coverage.run]
-# source = ["src/hexaload"]
-# # Network-only code, not covered by the offline suite — mock it before
-# # measuring:
-# omit = ["*/data/fetch.py"]
-#
-# [tool.coverage.report]
-# show_missing = true
+[tool.ty.src]
+include = ["hexaload", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/hexaload"]
+# HTTP is mocked in the offline test suite, so fetch.py is covered too.
+
+[tool.coverage.report]
+show_missing = true
 
 [dependency-groups]
 dev = [
