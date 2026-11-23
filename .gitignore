@@ -221,3 +221,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Agents file
+.vibe/
+AGENTS.md
+
+# Project data: raw datasets, on-disk API cache, temporary investigation
+# scripts — everything under data/ is reproducible from the network and must
+# stay out of git (the backtest replays from this cache, offline).
+data/*
+!data/.gitkeep
+
+# Generated benchmark outputs (results table is generated, never hand-edited)
+results/*
+!results/.gitkeep
