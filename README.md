@@ -10,7 +10,7 @@ A benchmark of national French electricity load forecasting on RTE's open data (
 - `src/hexaload/data/` — network-only fetching (ODRE/RTE eco2mix + Open-Meteo
   weather archive) with an on-disk parquet cache, and strict, network-free
   validation (pydantic v2);
-- `scripts/` — application entrypoints (data fetch);
+- `scripts/` — application entrypoints (data fetch, backtest);
 - `notebooks/` — exploratory data analysis (plotly);
 - `data/` — cache + processed data (gitignored; `--offline` replays it).
 
@@ -22,6 +22,26 @@ Fetch the open datasets (eco2mix national + Open-Meteo weather archive) into
 ```bash
 uv run python scripts/fetch_data.py --from 2023-01-01 --to 2026-12-01
 uv run python scripts/fetch_data.py --offline   # replay from cache only
+```
+
+The fetch crosses the 2026-08-31 feed switch transparently: ODRE's
+`eco2mix-national-cons-def` stops there, and the recent tail comes from
+`eco2mix-national-tr` (same indicator, real-time, stitched by the backtest).
+The real-time feed keeps only ~85 days, so re-run about once a month to
+archive the tail (eco2mix only, weather is untouched):
+
+```bash
+uv run python scripts/fetch_data.py --source eco2mix
+```
+
+## Backtest
+
+Offline walk-forward evaluation (naive baselines + RTE's own D-1 forecast as
+reference) over the processed hourly series; writes `results/backtest.parquet`
+
+
+```bash
+uv run python scripts/run_backtest.py
 ```
 
 ## Usage

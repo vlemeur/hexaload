@@ -1,10 +1,10 @@
-"""Network-only fetching from open data APIs (ODRE / RTE eco2mix).
+"""Fetching from open data APIs (ODRE / RTE eco2mix) + eco2mix stitching.
 
-This module knows nothing about forecasting, metrics or backtesting: it
-returns raw records exactly as the APIs serve them. Network politeness lives
-here: identified User-Agent, throttling, tenacity retries with exponential
-backoff, and honouring rate-limit headers. Every response is cached on disk
-as parquet so downstream stages can run fully offline.
+Fetching returns raw records exactly as the APIs serve them. Network
+politeness lives here: identified User-Agent, throttling, tenacity retries
+with exponential backoff, and honouring rate-limit headers. Every response
+is cached on disk as parquet so downstream stages can run fully offline.
+``stitch_eco2mix`` (offline) joins the cons-def feed with the real-time tail.
 
 Note: fetch from a network whose exit IP is accepted by the ODRE WAF — some
 VPN exit IPs get their TLS handshake reset by the WAF.
@@ -423,3 +423,75 @@ def fetch_openmeteo_dataset(
             "fetched %s: %d records over %d grid points", key, len(records), len(points)
         )
     return files
+
+
+# --- eco2mix national: automatic cons-def -> tr feed switch -----------------
+# ODRE's cons-def feed stops at 2026-08-31 21:45 UTC; the same indicator keeps
+# flowing on the "-tr" (temps réel) dataset with a ~85-day sliding retention.
+# fetch_eco2mix hides this: callers just give a [start, end) range.
+CONS_DEF_DATASET = "eco2mix-national-cons-def"
+TR_DATASET = "eco2mix-national-tr"
+CONS_DEF_END = datetime(2026, 9, 1, tzinfo=UTC)  # first month with no cons-def data
+TR_START = datetime(2026, 8, 31, tzinfo=UTC)  # first day covered by the tr feed
+
+
+def fetch_eco2mix(
+    start: datetime,
+    end: datetime,
+    cache_dir: Path | str,
+    *,
+    refresh: bool = False,
+    progress: bool = False,
+) -> list[Path]:
+    """Fetch the national eco2mix series over [start, end), crossing the
+    cons-def -> tr feed switch at 2026-08-31 automatically.
+
+    Returns the cache files of both datasets involved.
+    """
+    files: list[Path] = []
+    if start < CONS_DEF_END:
+        files += fetch_dataset(
+            CONS_DEF_DATASET,
+            start,
+            min(end, CONS_DEF_END),
+            cache_dir,
+            refresh=refresh,
+            progress=progress,
+        )
+    if end > TR_START:
+        files += fetch_dataset(
+            TR_DATASET,
+            max(start, TR_START),
+            end,
+            cache_dir,
+            refresh=refresh,
+            progress=progress,
+        )
+    return files
+
+
+# --- eco2mix stitch ---------------------------------------------------------
+# ODRE's ``eco2mix-national-cons-def`` stopped publishing at 2026-08-31 21:45
+# UTC. The same indicator keeps flowing on ``eco2mix-national-tr`` ("Données
+# temps réel", ~85-day sliding retention), so the national series is:
+#   cons-def (corrected) 2012-03 -> 2026-08-31 21:45 UTC
+#   + tr     (provisional) 2026-08-31 22:00 UTC -> M-1
+# Both feeds share the schema and satisfy the same internal identity
+# (consommation = sum(production branches) + ech_physiques + pompage, residual
+# ~0.1 % from meter readings + flat allowances), so the stitch does not mix
+# two different measurements — only a provisional and a corrected version of
+# the same one. The ``source`` column keeps the origin visible downstream.
+
+SOURCE_CONS_DEF = "cons-def"
+SOURCE_TR = "tr"
+
+
+def stitch_eco2mix(cons_def: pd.DataFrame, tr: pd.DataFrame) -> pd.DataFrame:
+    """Concatenate the two hourly frames; cons-def wins on overlapping stamps."""
+    a = cons_def.copy()
+    a["source"] = SOURCE_CONS_DEF
+    b = tr.copy()
+    b["source"] = SOURCE_TR
+    out = pd.concat([a, b])
+    out = out[~out.index.duplicated(keep="first")].sort_index()
+    return out

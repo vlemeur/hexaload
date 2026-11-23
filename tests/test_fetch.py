@@ -4,16 +4,25 @@ import json
 import time
 from datetime import UTC, datetime
 
+import numpy as np
+import pandas as pd
 import pytest
 import requests
 
 from hexaload.data import fetch
 from hexaload.data.fetch import (
+    CONS_DEF_DATASET,
+    CONS_DEF_END,
+    SOURCE_CONS_DEF,
+    SOURCE_TR,
+    TR_DATASET,
+    TR_START,
     FetchError,
     fetch_dataset,
     iter_month_ranges,
     load_manifest,
     read_cache,
+    stitch_eco2mix,
 )
 
 
@@ -177,3 +186,79 @@ def test_fetch_dataset_progress_bar_smoke(tmp_path, monkeypatch):
         progress=True,
     )
     assert len(files) == 2
+
+
+def _hourly_frame(start: str, n: int, base: float) -> pd.DataFrame:
+    idx = pd.date_range(start, periods=n, freq="1h", tz="UTC")
+    return pd.DataFrame(
+        {
+            "consommation": base + np.arange(n, dtype=float),
+            "prevision_j1": base + 100 + np.arange(n, dtype=float),
+        },
+        index=idx.rename("date_heure_utc"),
+    )
+
+
+def test_stitch_appends_tr_after_cons_def() -> None:
+    cons = _hourly_frame("2026-08-31T18:00:00+00:00", 4, 40_000.0)  # ..21:00
+    tr = _hourly_frame("2026-08-31T22:00:00+00:00", 3, 39_000.0)  # 22:00..
+    out = stitch_eco2mix(cons, tr)
+    assert len(out) == 7
+    assert list(out["source"]) == [SOURCE_CONS_DEF] * 4 + [SOURCE_TR] * 3
+    assert out.index.is_monotonic_increasing
+    assert out["consommation"].iloc[-1] == 39_002.0
+
+
+def test_stitch_cons_def_wins_on_overlap() -> None:
+    cons = _hourly_frame("2026-08-31T20:00:00+00:00", 4, 40_000.0)  # ..23:00
+    tr = _hourly_frame("2026-08-31T22:00:00+00:00", 2, 99_000.0)  # overlap 22,23
+    out = stitch_eco2mix(cons, tr)
+    assert len(out) == 4
+    assert (out["source"] == SOURCE_CONS_DEF).all()
+    assert out["consommation"].iloc[-1] == 40_003.0  # not the tr value
+
+
+def test_stitch_empty_tr() -> None:
+    cons = _hourly_frame("2026-08-31T20:00:00+00:00", 2, 40_000.0)
+    out = stitch_eco2mix(cons, cons.iloc[:0])
+    assert len(out) == 2
+    assert (out["source"] == SOURCE_CONS_DEF).all()
+
+
+def test_fetch_eco2mix_splits_at_feed_switch(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_fetch_dataset(dataset, start, end, cache_dir, **kwargs):
+        calls.append((dataset, start, end))
+        return []
+
+    monkeypatch.setattr(fetch, "fetch_dataset", fake_fetch_dataset)
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    end = datetime(2026, 11, 24, tzinfo=UTC)
+    fetch.fetch_eco2mix(start, end, tmp_path)
+    assert calls == [
+        (CONS_DEF_DATASET, start, CONS_DEF_END),
+        (TR_DATASET, TR_START, end),
+    ]
+
+
+def test_fetch_eco2mix_old_range_only_cons_def(monkeypatch, tmp_path) -> None:
+    calls = []
+    monkeypatch.setattr(
+        fetch, "fetch_dataset", lambda *a, **k: calls.append(a[0]) or []
+    )
+    fetch.fetch_eco2mix(
+        datetime(2020, 1, 1, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC), tmp_path
+    )
+    assert calls == [CONS_DEF_DATASET]
+
+
+def test_fetch_eco2mix_recent_range_only_tr(monkeypatch, tmp_path) -> None:
+    calls = []
+    monkeypatch.setattr(
+        fetch, "fetch_dataset", lambda *a, **k: calls.append(a[0]) or []
+    )
+    fetch.fetch_eco2mix(
+        datetime(2026, 9, 15, tzinfo=UTC), datetime(2026, 11, 24, tzinfo=UTC), tmp_path
+    )
+    assert calls == [TR_DATASET]
