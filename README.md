@@ -24,11 +24,21 @@ uv run python scripts/fetch_data.py --from 2023-01-01 --to 2026-12-01
 uv run python scripts/fetch_data.py --offline   # replay from cache only
 ```
 
+The fetch crosses the 2026-08-31 feed switch transparently: ODRE's
+`eco2mix-national-cons-def` stops there, and the recent tail comes from
+`eco2mix-national-tr` (same indicator, real-time, stitched by the backtest).
+The real-time feed keeps only ~85 days, so re-run about once a month to
+archive the tail (eco2mix only, weather is untouched):
+
+```bash
+uv run python scripts/fetch_data.py --source eco2mix
+```
+
 ## Backtest
 
 Offline walk-forward evaluation (naive baselines + RTE's own D-1 forecast as
 reference) over the processed hourly series; writes `results/backtest.parquet`
-+ `.md`:
+
 
 ```bash
 uv run python scripts/run_backtest.py

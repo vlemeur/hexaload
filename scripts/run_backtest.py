@@ -28,34 +28,51 @@ from hexaload.backtest.walkforward import (
     DEFAULT_START,
     walk_forward_splits,
 )
+from hexaload.data.fetch import stitch_eco2mix
 from hexaload.metrics import DEFAULT_SP, mae, mase, rmse
 from hexaload.results.table import summarize, write_table
 
 logger = logging.getLogger("hexaload.backtest")
 
 DATA = Path("data/processed")
-ECO_PARQUET = DATA / "eco2mix-national-cons-def-hourly.parquet"
+CONS_DEF_PARQUET = DATA / "eco2mix-national-cons-def-hourly.parquet"
+TR_PARQUET = DATA / "eco2mix-national-tr-hourly.parquet"
 WX_PARQUET = DATA / "openmeteo-icon_eu-hourly-national.parquet"
 
 
-def load_targets() -> tuple[pd.Series, pd.Series, pd.DataFrame]:
-    """y = national consumption, ref = RTE D-1 forecast, wx = as-of weather."""
-    eco = pd.read_parquet(ECO_PARQUET)
+def load_targets() -> tuple[pd.Series, pd.Series, pd.DataFrame, pd.Series]:
+    """Stitched y/ref (cons-def + real-time tail), weather, and the source mask."""
+    cons_def = pd.read_parquet(CONS_DEF_PARQUET)
+    tr = pd.read_parquet(TR_PARQUET) if TR_PARQUET.exists() else pd.DataFrame()
+    if tr.empty:
+        logger.warning(
+            "no real-time tail (%s missing); using cons-def only", TR_PARQUET
+        )
+        eco = cons_def.copy()
+        eco["source"] = "cons-def"
+    else:
+        eco = stitch_eco2mix(cons_def, tr)
+        boundary = eco.index[eco["source"] == "tr"][0]
+        logger.info(
+            "stitched eco2mix: cons-def -> %s, tr from %s", eco.index.max(), boundary
+        )
     y = eco["consommation"]
     ref = eco["prevision_j1"]
+    source = eco["source"]
     # Exogenous archive forecasts (leakage-safe by construction); not used by
     # the naive baselines yet, loaded to assert the pipeline is complete.
     wx = pd.read_parquet(WX_PARQUET)
-    return y, ref, wx
+    return y, ref, wx, source
 
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
-    y, ref, wx = load_targets()
+    y, ref, wx, source = load_targets()
     logger.info(
-        "target: %d hourly steps %s -> %s | weather: %d x %d",
+        "target: %d hourly steps %s -> %s (%s) | weather: %d x %d",
         len(y),
         y.index.min(),
         y.index.max(),
+        "/".join(source.unique()),
         *wx.shape,
     )
     splits = walk_forward_splits(

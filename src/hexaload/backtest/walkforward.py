@@ -18,7 +18,7 @@ import pandas as pd
 from sktime.split import ExpandingWindowSplitter, SlidingWindowSplitter
 
 DEFAULT_START = "2023-01-01"
-DEFAULT_END = "2026-11-01"
+DEFAULT_END = "2026-11-24"  # stitched eco2mix tail (temps réel) reaches M-1
 DEFAULT_HORIZON = 24  # hours ahead
 
 

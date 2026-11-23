@@ -21,8 +21,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PERIMETRE = "France"
 # Union of both natures for continuity (phase-2 audit): "Données définitives"
-# covers 2012→2025-12, "Données consolidées" covers 2025-12→M-1.
+# covers 2012→2025-12, "Données consolidées" covers 2025-12→2026-08-31 (the
+# cons-def feed then stops on ODRE; see stitch.py for the real-time tail).
 DEFAULT_NATURES = ("Données définitives", "Données consolidées")
+# Nature of the eco2mix "*-tr" (temps réel) datasets: same indicator, provisional.
+NATURE_TR = "Données temps réel"
 
 
 class Eco2mixRecord(BaseModel):
