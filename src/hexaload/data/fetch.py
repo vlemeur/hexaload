@@ -17,7 +17,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,14 @@ ODRE_BASE = "https://odre.opendatasoft.com/api/explore/v2.1"
 DEFAULT_DATASET = "eco2mix-national-cons-def"
 PAGE_LIMIT = 100  # hard API cap on this ODRE instance: -1 <= limit <= 100
 MIN_REQUEST_INTERVAL_S = 1.0
+
+# Open-Meteo Historical Forecast API (archived forecasts, replayed as-of date).
+OPENMETEO_BASE = "https://historical-forecast-api.open-meteo.com/v1"
+OPENMETEO_MODEL = "icon_eu"  # frozen on purpose: a benchmark must be reproducible
+GRID_STEP_DEG = 1.0
+GRID_LAT_RANGE = (41.5, 51.5)  # metropolitan France, inclusive
+GRID_LON_RANGE = (-5.0, 8.0)
+POINTS_PER_REQUEST = 50
 
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -242,3 +250,116 @@ def read_cache(dataset: str, cache_dir: Path | str) -> pd.DataFrame:
         raise FetchError(f"no cached parquet files for {dataset!r} in {cache}")
     logger.info("replaying %d cache files for %s", len(files), dataset)
     return pd.concat((pd.read_parquet(f) for f in files), ignore_index=True)
+
+
+def france_grid(step: float = GRID_STEP_DEG) -> list[tuple[float, float]]:
+    """Regular lat/lon grid over metropolitan France (bounds inclusive)."""
+    n_lat = int(round((GRID_LAT_RANGE[1] - GRID_LAT_RANGE[0]) / step)) + 1
+    n_lon = int(round((GRID_LON_RANGE[1] - GRID_LON_RANGE[0]) / step)) + 1
+    lats = [round(GRID_LAT_RANGE[0] + i * step, 4) for i in range(n_lat)]
+    lons = [round(GRID_LON_RANGE[0] + j * step, 4) for j in range(n_lon)]
+    return [(lat, lon) for lat in lats for lon in lons]
+
+
+def fetch_openmeteo_month(
+    client: HttpClient,
+    points: list[tuple[float, float]],
+    start: datetime,
+    end: datetime,
+    *,
+    model: str = OPENMETEO_MODEL,
+) -> list[dict[str, Any]]:
+    """Fetch hourly ``temperature_2m`` archived forecasts for [start, end) UTC.
+
+    Open-Meteo's ``end_date`` is inclusive; with ``timezone=UTC`` the returned
+    times are UTC. One request per packet of grid points.
+    """
+    params: dict[str, Any] = {
+        "latitude": ",".join(f"{lat:.4f}" for lat, _ in points),
+        "longitude": ",".join(f"{lon:.4f}" for _, lon in points),
+        "start_date": start.date().isoformat(),
+        "end_date": (end - timedelta(days=1)).date().isoformat(),
+        "hourly": "temperature_2m",
+        "models": model,
+        "timezone": "UTC",
+    }
+    payload = client.get_json("forecast", params)
+    if isinstance(payload, dict):  # single-point responses come back bare
+        payload = [payload]
+    records: list[dict[str, Any]] = []
+    for point in payload:
+        times = point.get("hourly", {}).get("time", [])
+        temps = point.get("hourly", {}).get("temperature_2m", [])
+        for t, temp in zip(times, temps, strict=True):
+            records.append(
+                {
+                    "time": t,
+                    "latitude": point.get("latitude"),
+                    "longitude": point.get("longitude"),
+                    "temperature_2m": temp,
+                    "model": model,
+                }
+            )
+    return records
+
+
+def fetch_openmeteo_dataset(
+    start: datetime,
+    end: datetime,
+    cache_dir: Path | str,
+    *,
+    model: str = OPENMETEO_MODEL,
+    step: float = GRID_STEP_DEG,
+    points_per_request: int = POINTS_PER_REQUEST,
+    client: HttpClient | None = None,
+    refresh: bool = False,
+    progress: bool = False,
+) -> list[Path]:
+    """Fetch the France grid of archived forecasts into the cache, month by month.
+
+    Same cache mechanics as ODRE: ``cache_dir/openmeteo-<model>/YYYY-MM.parquet``
+    plus ``manifest.json`` (sha256, fetched_at, count, grid step, model).
+    """
+    dataset = f"openmeteo-{model}"
+    client = client or HttpClient(base_url=OPENMETEO_BASE)
+    cache = Path(cache_dir) / dataset
+    cache.mkdir(parents=True, exist_ok=True)
+    manifest = load_manifest(cache)
+    manifest.update({"dataset": dataset, "model": model, "grid_step_deg": step})
+    points = france_grid(step)
+    packets = [
+        points[i : i + points_per_request]
+        for i in range(0, len(points), points_per_request)
+    ]
+    ranges: Iterable[tuple[datetime, datetime]] = iter_month_ranges(start, end)
+    if progress:
+        ranges = tqdm(ranges, desc=f"fetch {dataset}", unit="month")
+    files: list[Path] = []
+    for month_start, month_end in ranges:
+        key = month_start.strftime("%Y-%m")
+        path = cache / f"{key}.parquet"
+        if not refresh and manifest.get("ranges", {}).get(key) and path.exists():
+            logger.info("cache hit: %s", key)
+            files.append(path)
+            continue
+        records: list[dict[str, Any]] = []
+        for packet in packets:
+            records.extend(
+                fetch_openmeteo_month(
+                    client, packet, month_start, month_end, model=model
+                )
+            )
+        sha256 = _write_parquet(path, records)
+        manifest.setdefault("ranges", {})[key] = {
+            "file": path.name,
+            "sha256": sha256,
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "count": len(records),
+            "points": len(points),
+        }
+        _save_manifest(cache, manifest)
+        files.append(path)
+        logger.info(
+            "fetched %s: %d records over %d grid points", key, len(records), len(points)
+        )
+    return files

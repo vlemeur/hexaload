@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -61,6 +61,36 @@ class Eco2mixRecord(BaseModel):
         return int(v)
 
 
+class WeatherRecord(BaseModel):
+    """One archived forecast grid point (hourly temperature_2m), strictly typed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time: datetime
+    latitude: float
+    longitude: float
+    temperature_2m: float | None
+    model: str
+
+    @field_validator("time", mode="before")
+    @classmethod
+    def _parse_time(cls, v: Any) -> datetime:
+        dt = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+        # Open-Meteo with timezone=UTC returns naive ISO strings: pin them to UTC
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
+
+    @field_validator("temperature_2m", mode="before")
+    @classmethod
+    def _coerce_optional_float(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return float(v)
+
+
 @dataclass
 class ValidationReport:
     input_rows: int = 0
@@ -75,13 +105,14 @@ class ValidationReport:
         )
 
 
-def validate_raw(raw: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
-    """Validate raw records row by row against the strict schema."""
+def _validate_with(
+    model_cls: type[BaseModel], raw: pd.DataFrame
+) -> tuple[pd.DataFrame, ValidationReport]:
     report = ValidationReport(input_rows=len(raw))
     clean: list[dict[str, Any]] = []
     for i, record in enumerate(raw.to_dict("records")):
         try:
-            clean.append(Eco2mixRecord.model_validate(record).model_dump())
+            clean.append(model_cls.model_validate(record).model_dump())
         except ValidationError as exc:
             report.rejected_rows += 1
             if len(report.errors) < 20:
@@ -91,6 +122,16 @@ def validate_raw(raw: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
     if report.errors:
         logger.warning("first validation errors: %s", report.errors[:5])
     return pd.DataFrame(clean), report
+
+
+def validate_raw(raw: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
+    """Validate raw eco2mix records row by row against the strict schema."""
+    return _validate_with(Eco2mixRecord, raw)
+
+
+def validate_weather(raw: pd.DataFrame) -> tuple[pd.DataFrame, ValidationReport]:
+    """Validate raw archived-forecast records row by row."""
+    return _validate_with(WeatherRecord, raw)
 
 
 def aggregate_hourly(
@@ -112,12 +153,29 @@ def aggregate_hourly(
     return hourly
 
 
+def aggregate_temperature_national(clean: pd.DataFrame) -> pd.DataFrame:
+    """Simple mean of temperature_2m over the grid, per UTC hour."""
+    sub = clean.copy()
+    sub["time"] = pd.to_datetime(sub["time"], utc=True)
+    hourly = sub.groupby("time")["temperature_2m"].mean().to_frame("temperature_2m_c")
+    hourly.index.name = "date_heure_utc"
+    return hourly.sort_index()
+
+
 def build_hourly_dataset(
     raw: pd.DataFrame,
     *,
     perimetre: str = DEFAULT_PERIMETRE,
     nature: str = DEFAULT_NATURE,
 ) -> tuple[pd.DataFrame, ValidationReport]:
-    """Full pipeline: validate raw records, then aggregate to hourly UTC."""
+    """Full pipeline: validate raw eco2mix records, then aggregate to hourly UTC."""
     clean, report = validate_raw(raw)
     return aggregate_hourly(clean, perimetre=perimetre, nature=nature), report
+
+
+def build_weather_dataset(
+    raw: pd.DataFrame,
+) -> tuple[pd.DataFrame, ValidationReport]:
+    """Full pipeline: validate raw forecast records, then national hourly mean."""
+    clean, report = validate_weather(raw)
+    return aggregate_temperature_national(clean), report
