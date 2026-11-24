@@ -44,6 +44,7 @@ from hexaload.metrics import DEFAULT_SP, crps, mae, mase, rmse, sample_quantiles
 from hexaload.models import (
     DEFAULT_QUANTILES,
     HGBFeatures,
+    MLPFeatures,
     RidgeFeatures,
     SktimeAutoETS,
     SktimeTheta,
@@ -170,6 +171,7 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                 ("ridge_features", RidgeFeatures),
                 ("hgb_features", HGBFeatures),
                 ("xgb_features", XGBFeatures),
+                ("mlp_features", MLPFeatures),
             ):
                 if name in skip:
                     continue
