@@ -7,6 +7,7 @@ from .base import DEFAULT_QUANTILES, BaseForecaster
 from .gbm import HGBFeatures
 from .linear import RidgeFeatures
 from .stats import SktimeAutoETS, SktimeTheta
+from .xgb import XGBFeatures
 
 __all__ = [
     "DEFAULT_QUANTILES",
@@ -15,4 +16,5 @@ __all__ = [
     "RidgeFeatures",
     "SktimeAutoETS",
     "SktimeTheta",
+    "XGBFeatures",
 ]
