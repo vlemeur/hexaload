@@ -15,13 +15,14 @@ from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from .base import BaseForecaster
 
-class RidgeFeatures:
+
+class RidgeFeatures(BaseForecaster):
     """sklearn pipeline (median-impute -> standardize -> Ridge) on features.
 
-    Common hexaload model interface: ``.fit(X_train, y_train) -> self``,
-    ``.predict(X_future) -> pd.Series`` (point forecast; quantiles come with
-    the probabilistic families).
+    Common hexaload interface: ``.fit(y_train, X_train)`` and
+    ``.predict(test, X_future)``.
     """
 
     def __init__(self, alpha: float = 1.0) -> None:
@@ -34,22 +35,33 @@ class RidgeFeatures:
         )
         self._cols: list[str] | None = None
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> RidgeFeatures:
-        """Fit on X/y aligned on X's index; NaN rows handled by the imputer."""
-        y_aligned = y.reindex(X.index)
+    def fit(
+        self, y_train: pd.Series, X_train: pd.DataFrame | None = None
+    ) -> RidgeFeatures:
+        """Fit on the train fold; NaN target rows dropped, NaN features imputed."""
+        if X_train is None:
+            raise ValueError("RidgeFeatures is feature-based: X_train is required")
+        y_aligned = y_train.reindex(X_train.index)
         mask = y_aligned.notna()
         if not mask.any():
             raise ValueError("no non-NaN target rows to fit on")
-        self._cols = list(X.columns)
-        self._pipe.fit(X.loc[mask, self._cols], y_aligned.loc[mask])
+        self._cols = list(X_train.columns)
+        self._pipe.fit(X_train.loc[mask, self._cols], y_aligned.loc[mask])
         return self
 
-    def predict(self, X_future: pd.DataFrame) -> pd.Series:
-        """Point forecast on ``X_future`` (already masked at the fold origin)."""
-        if self._cols is None:
+    def predict(
+        self, test: pd.Index, X_future: pd.DataFrame | None = None
+    ) -> pd.Series:
+        """Point forecast over ``test`` (features already masked at the fold origin)."""
+        cols = self._cols
+        if cols is None:
             raise RuntimeError("call fit() before predict()")
-        missing = [c for c in self._cols if c not in X_future.columns]
+        if X_future is None:
+            raise ValueError("RidgeFeatures is feature-based: X_future is required")
+        test = pd.DatetimeIndex(test)
+        Xt = X_future.reindex(test)
+        missing = [c for c in cols if c not in Xt.columns]
         if missing:
             raise ValueError(f"missing feature columns: {missing[:5]}")
-        pred = self._pipe.predict(X_future[self._cols])
-        return pd.Series(np.clip(pred, 0.0, None), index=X_future.index, name="y_pred")
+        pred = self._pipe.predict(Xt[cols])
+        return pd.Series(np.clip(pred, 0.0, None), index=test, name="y_pred")

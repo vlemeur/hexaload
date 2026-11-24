@@ -1,8 +1,11 @@
-"""Offline walk-forward backtest: naive baselines + RTE's prevision_j1.
+"""Offline walk-forward backtest: baselines + RTE's prevision_j1 + models.
 
-Loads the processed parquets, runs walk-forward folds (sktime splitters),
-scores each model (MAE/RMSE/MASE; CRPS is reserved for probabilistic models)
-and writes the aggregated table under results/. Run from the repo root:
+Models: naive/seasonal-naive baselines, RTE's own D-1 forecast (absolute
+reference), feature-based models (ridge, HGB) and univariate sktime stats
+forecasters (ETS, Theta). Loads the processed parquets,
+runs walk-forward folds (sktime splitters), scores each model (MAE/RMSE/MASE;
+CRPS is reserved for probabilistic models) and writes the aggregated table
+under results/. Run from the repo root:
     uv run python scripts/run_backtest.py
     uv run python scripts/run_backtest.py --expanding --step-length 168
 """
@@ -32,7 +35,7 @@ from hexaload.backtest.walkforward import (
 )
 from hexaload.data.fetch import stitch_eco2mix
 from hexaload.metrics import DEFAULT_SP, mae, mase, rmse
-from hexaload.models import RidgeFeatures
+from hexaload.models import HGBFeatures, RidgeFeatures, SktimeAutoETS, SktimeTheta
 from hexaload.results.table import summarize, write_table
 
 logger = logging.getLogger("hexaload.backtest")
@@ -122,7 +125,9 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
     for split in tqdm(splits, desc="walk-forward", unit="fold"):
         y_train = y.loc[split.train]
         y_test = y.loc[split.test]
-        preds = {
+        skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+        preds: dict[str, pd.Series] = {}
+        for name, pred in {
             "naive": predict_naive(y_train, split.test),
             "seasonal_naive_24": predict_seasonal_naive(
                 y, split.train, split.test, sp=24
@@ -131,11 +136,45 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                 y, split.train, split.test, sp=168
             ),
             "rte_prevision_j1": predict_rte_prevision_j1(ref, split.test),
-        }
+        }.items():
+            if name not in skip:
+                preds[name] = pred
         if X is not None and manifest is not None:
             X_fold = fold_features(X, manifest, split)
-            model = RidgeFeatures().fit(X_fold.loc[split.train], y_train)
-            preds["ridge_features"] = model.predict(X_fold.loc[split.test])
+            for name, model_cls in (
+                ("ridge_features", RidgeFeatures),
+                ("hgb_features", HGBFeatures),
+            ):
+                if name in skip:
+                    continue
+                try:
+                    preds[name] = (
+                        model_cls()
+                        .fit(y_train, X_fold.loc[split.train])
+                        .predict(split.test, X_fold.loc[split.test])
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "fold %s: model %s failed (%s) — no score for this fold",
+                        split.test_start.date(),
+                        name,
+                        exc,
+                    )
+        for name, model_cls in (
+            ("sktime_autoets", SktimeAutoETS),
+            ("sktime_theta", SktimeTheta),
+        ):
+            if name in skip:
+                continue
+            try:
+                preds[name] = model_cls().fit(y_train).predict(split.test)
+            except Exception as exc:
+                logger.warning(
+                    "fold %s: model %s failed (%s) — no score for this fold",
+                    split.test_start.date(),
+                    name,
+                    exc,
+                )
         for model, pred in preds.items():
             records.append(
                 {
@@ -172,6 +211,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--expanding", action="store_true", help="expanding instead of sliding window"
+    )
+    parser.add_argument(
+        "--skip",
+        default="",
+        help="comma-separated model names to skip (e.g. 'sktime_autoarima')",
     )
     parser.add_argument("--out", default="results/backtest.parquet")
     args = parser.parse_args()
