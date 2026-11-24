@@ -56,4 +56,4 @@ def lags_block(
         delays["lag_rte_prevision_j1"] = RTE_D1_DELAY_H
 
     out = pd.DataFrame(frame, index=index)
-    return FeatureBlock("lags", out, delays)
+    return FeatureBlock("lags", out, delays, reads_target=True)

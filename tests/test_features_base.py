@@ -15,7 +15,7 @@ def toy_block(idx: pd.DatetimeIndex, delays: dict[str, int]) -> FeatureBlock:
     frame = pd.DataFrame(
         {c: np.arange(len(idx), dtype=float) for c in delays}, index=idx
     )
-    return FeatureBlock("toy", frame, delays)
+    return FeatureBlock("toy", frame, delays, reads_target=True)
 
 
 def test_index_must_be_tz_aware_utc() -> None:
@@ -33,7 +33,10 @@ def test_block_rejects_delay_mismatch_and_negative() -> None:
     with pytest.raises(ValueError, match="mismatch"):
         FeatureBlock("toy", frame.assign(b=[2.0] * 10), {"a": 0})
     with pytest.raises(ValueError, match=">= 0"):
-        FeatureBlock("toy", frame, {"a": -1})
+        FeatureBlock("toy", frame, {"a": -1}, reads_target=True)
+    # exogenous block (reads_target=False) must have delay 0
+    with pytest.raises(ValueError, match="delay 0"):
+        FeatureBlock("exo", frame, {"a": 5})
     with pytest.raises(ValueError, match="timezone-aware"):
         FeatureBlock(
             "toy",
@@ -70,7 +73,10 @@ def test_future_perturbation_does_not_leak_into_available_features() -> None:
 
     def make_block(series: pd.Series, *, shift: int) -> FeatureBlock:
         return FeatureBlock(
-            "toy_lags", series.shift(shift).to_frame("lag_24"), {"lag_24": 24}
+            "toy_lags",
+            series.shift(shift).to_frame("lag_24"),
+            {"lag_24": 24},
+            reads_target=True,
         )
 
     y_future = y.copy()
@@ -102,3 +108,14 @@ def test_truncation_equivalence_on_past() -> None:
     full = lag24(y).loc[:as_of]
     part = lag24(y.loc[:as_of])
     pd.testing.assert_series_equal(full, part, check_dtype=False)
+
+
+def test_exogenous_block_always_available() -> None:
+    """reads_target=False: known in advance, never masked by as_of."""
+    idx = hourly_index(24 * 5)
+    block = FeatureBlock(
+        "cal", pd.DataFrame({"flag": np.ones(len(idx))}, index=idx), {"flag": 0}
+    )
+    as_of = idx[24 * 2]
+    out = block.apply_as_of(as_of)
+    assert out["flag"].notna().all()  # future included

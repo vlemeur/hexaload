@@ -26,8 +26,16 @@ def test_build_full_table_shape_and_manifest(
     assert set(CAL_COLUMNS) | set(CYC_COLUMNS) <= set(X.columns)
     assert any(c.startswith("wx_") for c in X.columns)
     assert any(c.startswith("lag_") for c in X.columns)
-    assert all(m["delay_h"] == 0 for c, m in manifest.items() if m["block"] != "lags")
-    assert all(m["delay_h"] >= 24 for c, m in manifest.items() if m["block"] == "lags")
+    assert all(
+        m["delay_h"] == 0 and not m["reads_target"]
+        for m in manifest.values()
+        if m["block"] != "lags"
+    )
+    assert all(
+        m["delay_h"] >= 24 and m["reads_target"]
+        for m in manifest.values()
+        if m["block"] == "lags"
+    )
     assert_horizon_safe(manifest, horizon=24)
 
 
@@ -53,11 +61,15 @@ def test_as_of_masks_by_delay(
     X, _ = build_feature_table(
         hourly_idx, as_of=as_of, school_csv=school_csv, wx=wx_national, y=y_load
     )
-    # delay-0 columns: known up to as_of, NaN after (past the 24h lag warm-up)
-    det = [c for c, m in manifest.items() if m["delay_h"] == 0]
+    # exogenous columns (reads_target=False): known in advance, available on
+    # the WHOLE horizon including the test block (past the 24h lag warm-up)
+    det = [c for c, m in manifest.items() if not m["reads_target"]]
     warm = hourly_idx[24]
-    assert X.loc[warm:as_of, det].notna().all().all()
-    assert X.loc[as_of + pd.Timedelta(hours=1) :, det].isna().all().all()
+    assert X.loc[warm:, det].notna().all().all()
+    # target-reading columns are masked beyond their availability
+    load = [c for c, m in manifest.items() if m["reads_target"]]
+    assert X["lag_load_24h"].loc[as_of + pd.Timedelta(hours=25) :,].isna().all()
+    assert load
     # lag_load_24h (delay 24): known up to as_of + 24h (after its 24h warm-up)
     warm = hourly_idx[24]
     assert X["lag_load_24h"].loc[warm : as_of + pd.Timedelta(hours=24)].notna().all()

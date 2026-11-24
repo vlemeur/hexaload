@@ -21,6 +21,7 @@ def test_direct_lags_and_delays(
         )
         assert b.delays[f"lag_load_{lag}h"] == lag
     assert b.delays["lag_load_168h_smooth3"] == 167
+    assert b.reads_target is True
 
 
 def test_rolling_shifted_by_horizon(
@@ -60,7 +61,10 @@ def test_manifest_horizon_safety(
     hourly_idx: pd.DatetimeIndex, y_load: pd.Series
 ) -> None:
     b = lags_block(y_load, index=hourly_idx, horizon=24)
-    manifest = {c: {"block": "lags", "delay_h": d} for c, d in b.delays.items()}
+    manifest = {
+        c: {"block": "lags", "delay_h": d, "reads_target": True}
+        for c, d in b.delays.items()
+    }
     assert_horizon_safe(manifest, horizon=24)  # ok
     with pytest.raises(ValueError, match="leakage risk"):
         assert_horizon_safe(manifest, horizon=200)  # lag24 < 200h -> refuse

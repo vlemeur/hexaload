@@ -10,6 +10,7 @@ and writes the aggregated table under results/. Run from the repo root:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ from hexaload.backtest.baselines import (
     predict_rte_prevision_j1,
     predict_seasonal_naive,
 )
+from hexaload.backtest.features import fold_features
 from hexaload.backtest.walkforward import (
     DEFAULT_END,
     DEFAULT_HORIZON,
@@ -30,6 +32,7 @@ from hexaload.backtest.walkforward import (
 )
 from hexaload.data.fetch import stitch_eco2mix
 from hexaload.metrics import DEFAULT_SP, mae, mase, rmse
+from hexaload.models import RidgeFeatures
 from hexaload.results.table import summarize, write_table
 
 logger = logging.getLogger("hexaload.backtest")
@@ -38,6 +41,28 @@ DATA = Path("data/processed")
 CONS_DEF_PARQUET = DATA / "eco2mix-national-cons-def-hourly.parquet"
 TR_PARQUET = DATA / "eco2mix-national-tr-hourly.parquet"
 WX_PARQUET = DATA / "openmeteo-icon_eu-hourly-national.parquet"
+FEATURES_PARQUET = DATA / "features-latest.parquet"
+FEATURES_MANIFEST = DATA / "features-latest.manifest.json"
+
+
+def load_features() -> tuple[pd.DataFrame | None, dict | None]:
+    """Materialized feature table + manifest (scripts/build_features.py)."""
+    if not FEATURES_PARQUET.exists():
+        logger.warning(
+            "no feature table (%s missing); run scripts/build_features.py — "
+            "feature-based models are skipped",
+            FEATURES_PARQUET,
+        )
+        return None, None
+    X = pd.read_parquet(FEATURES_PARQUET)
+    manifest = json.loads(FEATURES_MANIFEST.read_text())["features"]
+    logger.info(
+        "features: %d cols x %d rows (%d target-reading)",
+        X.shape[1],
+        len(X),
+        sum(1 for m in manifest.values() if m.get("reads_target")),
+    )
+    return X, manifest
 
 
 def load_targets() -> tuple[pd.Series, pd.Series, pd.DataFrame, pd.Series]:
@@ -67,6 +92,7 @@ def load_targets() -> tuple[pd.Series, pd.Series, pd.DataFrame, pd.Series]:
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
     y, ref, wx, source = load_targets()
+    X, manifest = load_features()
     logger.info(
         "target: %d hourly steps %s -> %s (%s) | weather: %d x %d",
         len(y),
@@ -106,6 +132,10 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             ),
             "rte_prevision_j1": predict_rte_prevision_j1(ref, split.test),
         }
+        if X is not None and manifest is not None:
+            X_fold = fold_features(X, manifest, split)
+            model = RidgeFeatures().fit(X_fold.loc[split.train], y_train)
+            preds["ridge_features"] = model.predict(X_fold.loc[split.test])
         for model, pred in preds.items():
             records.append(
                 {
