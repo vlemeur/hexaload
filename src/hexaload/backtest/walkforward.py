@@ -52,7 +52,13 @@ def walk_forward_splits(
         raise ValueError("horizon must be >= 1")
     if window_length < 1 or step_length < 1:
         raise ValueError("window_length and step_length must be >= 1")
-    window = y.loc[start:end]
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    if y.index.tz is not None:  # interpret naive bounds in the series' timezone
+        if start_ts.tz is None:
+            start_ts = start_ts.tz_localize(y.index.tz)
+        if end_ts.tz is None:
+            end_ts = end_ts.tz_localize(y.index.tz)
+    window = y.loc[start_ts:end_ts]
     if len(window) < window_length + horizon:
         raise ValueError(
             f"not enough data: {len(window)} steps in [{start}, {end}] "

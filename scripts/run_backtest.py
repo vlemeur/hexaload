@@ -15,7 +15,6 @@ root:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from contextlib import suppress
@@ -33,86 +32,27 @@ from hexaload.backtest.baselines import (
     seasonal_residuals,
 )
 from hexaload.backtest.features import fold_features
+from hexaload.backtest.load import exogenous_columns, load_features, load_targets
 from hexaload.backtest.walkforward import (
     DEFAULT_END,
     DEFAULT_HORIZON,
     DEFAULT_START,
     walk_forward_splits,
 )
-from hexaload.data.fetch import stitch_eco2mix
 from hexaload.metrics import DEFAULT_SP, crps, mae, mase, rmse, sample_quantiles
-from hexaload.models import (
-    DEFAULT_QUANTILES,
-    NHITS,
-    ChronosBoltTSFM,
-    HGBFeatures,
-    MLPFeatures,
-    PatchTSTFeatures,
-    RidgeFeatures,
-    RNNFeatures,
-    SktimeAutoETS,
-    SktimeTheta,
-    TCNFeatures,
-    TimestralTSFM,
-    XGBFeatures,
-)
+from hexaload.models import DEFAULT_QUANTILES
 from hexaload.results.table import summarize, write_table
+from hexaload.tuning.params import load_best_params
+from hexaload.tuning.spaces import (
+    FEATURE_MODELS,
+    TSFM_MODELS,
+    UNIVARIATE_MODELS,
+    build_model,
+)
 
 logger = logging.getLogger("hexaload.backtest")
 
 N_SAMPLES = 100  # ensemble size for the empirical CRPS (from sampled quantiles)
-
-DATA = Path("data/processed")
-CONS_DEF_PARQUET = DATA / "eco2mix-national-cons-def-hourly.parquet"
-TR_PARQUET = DATA / "eco2mix-national-tr-hourly.parquet"
-WX_PARQUET = DATA / "openmeteo-icon_eu-hourly-national.parquet"
-FEATURES_PARQUET = DATA / "features-latest.parquet"
-FEATURES_MANIFEST = DATA / "features-latest.manifest.json"
-
-
-def load_features() -> tuple[pd.DataFrame | None, dict | None]:
-    """Materialized feature table + manifest (scripts/build_features.py)."""
-    if not FEATURES_PARQUET.exists():
-        logger.warning(
-            "no feature table (%s missing); run scripts/build_features.py — "
-            "feature-based models are skipped",
-            FEATURES_PARQUET,
-        )
-        return None, None
-    X = pd.read_parquet(FEATURES_PARQUET)
-    manifest = json.loads(FEATURES_MANIFEST.read_text())["features"]
-    logger.info(
-        "features: %d cols x %d rows (%d target-reading)",
-        X.shape[1],
-        len(X),
-        sum(1 for m in manifest.values() if m.get("reads_target")),
-    )
-    return X, manifest
-
-
-def load_targets() -> tuple[pd.Series, pd.Series, pd.DataFrame, pd.Series]:
-    """Stitched y/ref (cons-def + real-time tail), weather, and the source mask."""
-    cons_def = pd.read_parquet(CONS_DEF_PARQUET)
-    tr = pd.read_parquet(TR_PARQUET) if TR_PARQUET.exists() else pd.DataFrame()
-    if tr.empty:
-        logger.warning(
-            "no real-time tail (%s missing); using cons-def only", TR_PARQUET
-        )
-        eco = cons_def.copy()
-        eco["source"] = "cons-def"
-    else:
-        eco = stitch_eco2mix(cons_def, tr)
-        boundary = eco.index[eco["source"] == "tr"][0]
-        logger.info(
-            "stitched eco2mix: cons-def -> %s, tr from %s", eco.index.max(), boundary
-        )
-    y = eco["consommation"]
-    ref = eco["prevision_j1"]
-    source = eco["source"]
-    # Exogenous archive forecasts (leakage-safe by construction); not used by
-    # the naive baselines yet, loaded to assert the pipeline is complete.
-    wx = pd.read_parquet(WX_PARQUET)
-    return y, ref, wx, source
 
 
 def run(args: argparse.Namespace) -> pd.DataFrame:
@@ -143,6 +83,10 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         args.horizon,
         "expanding" if args.expanding else "sliding",
     )
+    model_params: dict[str, dict] = {}
+    if args.params:
+        model_params = load_best_params(args.params)
+        logger.info("tuned params from %s (%d models)", args.params, len(model_params))
     records: list[dict] = []
     for split in tqdm(splits, desc="walk-forward", unit="fold"):
         y_train = y.loc[split.train]
@@ -177,19 +121,13 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             else None
         )
         if X_fold is not None:
-            for name, model_cls in (
-                ("ridge_features", RidgeFeatures),
-                ("hgb_features", HGBFeatures),
-                ("xgb_features", XGBFeatures),
-                ("mlp_features", MLPFeatures),
-                ("rnn_features", RNNFeatures),
-                ("tcn_features", TCNFeatures),
-                ("patchtst_features", PatchTSTFeatures),
-            ):
+            for name in FEATURE_MODELS:
                 if name in skip:
                     continue
                 try:
-                    model = model_cls().fit(y_train, X_fold.loc[split.train])
+                    model = build_model(name, model_params.get(name)).fit(
+                        y_train, X_fold.loc[split.train]
+                    )
                     preds[name] = model.predict(split.test, X_fold.loc[split.test])
                 except Exception as exc:
                     logger.warning(
@@ -204,15 +142,11 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                     qpreds[name] = model.predict_quantiles(
                         split.test, X_fold.loc[split.test], DEFAULT_QUANTILES
                     )
-        for name, model_cls in (
-            ("sktime_autoets", SktimeAutoETS),
-            ("sktime_theta", SktimeTheta),
-            ("nhits", NHITS),
-        ):
+        for name in UNIVARIATE_MODELS:
             if name in skip:
                 continue
             try:
-                model = model_cls().fit(y_train)
+                model = build_model(name, model_params.get(name)).fit(y_train)
                 preds[name] = model.predict(split.test)
             except Exception as exc:
                 logger.warning(
@@ -228,21 +162,14 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                     split.test, quantiles=DEFAULT_QUANTILES
                 )
         # zero-shot TSFMs: exogenous columns only as known-future covariates
-        exo_cols = (
-            [c for c, m in manifest.items() if not m.get("reads_target")]
-            if manifest is not None
-            else []
-        )
-        for name, make in (
-            ("timestral_209m", lambda: TimestralTSFM("mistralai/Timestral-209M")),
-            ("chronos_bolt", lambda: ChronosBoltTSFM("amazon/chronos-bolt-base")),
-        ):
+        exo_cols = exogenous_columns(manifest)
+        for name in TSFM_MODELS:
             if name in skip:
                 continue
             try:
                 X_tr = X_fold.loc[split.train][exo_cols] if X_fold is not None else None
                 X_te = X_fold.loc[split.test][exo_cols] if X_fold is not None else None
-                model = make().fit(y_train, X_tr)
+                model = build_model(name, model_params.get(name)).fit(y_train, X_tr)
                 preds[name] = model.predict(split.test, X_te)
             except Exception as exc:
                 logger.warning(
@@ -301,6 +228,11 @@ def main() -> int:
         "--skip",
         default="",
         help="comma-separated model names to skip (e.g. 'sktime_autoarima')",
+    )
+    parser.add_argument(
+        "--params",
+        default=None,
+        help="YAML of per-model tuned params (e.g. results/tuning/best_params.yaml)",
     )
     parser.add_argument("--out", default="results/backtest.parquet")
     args = parser.parse_args()

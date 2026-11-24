@@ -10,6 +10,8 @@ Apple Silicon, CPU in CI/tests).
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import torch
@@ -80,6 +82,7 @@ class TorchForecaster(BaseForecaster):
         device: str | None = None,
         seed: int = 0,
         quantiles: tuple[float, ...] = DEFAULT_QUANTILES,
+        on_epoch_end: Any = None,
     ) -> None:
         self._h = h
         self._input_size = input_size
@@ -91,6 +94,8 @@ class TorchForecaster(BaseForecaster):
         self._device = resolve_device(device)
         self._seed = seed
         self._quantiles = tuple(quantiles)
+        # optional hook(epoch, val_loss) — used by Optuna ASHA pruning
+        self._on_epoch_end = on_epoch_end
         self._module: nn.Module | None = None
         self._X_tail: np.ndarray | None = None  # last input_size rows of X_eff
         self._cols_fit: list[str] | None = None  # columns of X_eff at fit (incl. __y__)
@@ -192,6 +197,8 @@ class TorchForecaster(BaseForecaster):
                 bad += 1
                 if bad >= self._patience:
                     break
+            if self._on_epoch_end is not None:
+                self._on_epoch_end(_epoch, val_loss)  # may raise (e.g. TrialPruned)
         if best_state is not None:
             module.load_state_dict(best_state)
         module.eval()

@@ -20,6 +20,19 @@ test-cov:
 check:
     uv run --locked prek run --all-files
 
+# Tune one model family (Optuna + MLflow, local SQLite/file store, offline data)
+# e.g. just tune hgb_features,xgb_features 50 120
+tune models="hgb_features,xgb_features" trials="30" budget_minutes="90":
+    uv run --locked python scripts/tune.py --models "{{models}}" --trials {{trials}} --budget-minutes {{budget_minutes}}
+
+# Evaluate the tuned best params on the reserved 2026 hold-out (touched once)
+tune-eval:
+    uv run --locked python scripts/tune.py --mode eval
+
+# Serve the local MLflow UI (tuning + hold-out runs)
+tune-ui:
+    uv run --locked mlflow ui --backend-store-uri sqlite:///$PWD/data/mlruns/mlflow.db --port 5000
+
 # Run every quality check
 all:
     just test
