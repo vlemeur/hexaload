@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 # Core only for now; statsforecast (Nixtlaverse) and TSFMs (Chronos, TimesFM,
 # Moirai) are added in phase 4, after Python 3.14 compatibility is validated.
 dependencies = [
+    "holidays>=0.109",
     "pandas>=2.3",
     "pyarrow>=18.0.0",
     "pydantic>=2.14.3",
