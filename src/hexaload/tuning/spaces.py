@@ -102,21 +102,25 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
     if model == "hgb_features":
         return {
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
-            "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 15, 127),
+            "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 15, 63),
             "min_samples_leaf": trial.suggest_int("min_samples_leaf", 10, 60),
             "l2_regularization": trial.suggest_float(
                 "l2_regularization", 1e-3, 10.0, log=True
             ),
-            "max_iter": trial.suggest_int("max_iter", 200, 800),
+            # capped: OMP_NUM_THREADS=1 in this process (anti-segfault with
+            # torch/libomp), so each fit is single-threaded — keep trees cheap,
+            # early stopping does the rest
+            "max_iter": trial.suggest_int("max_iter", 150, 600),
         }
     if model == "xgb_features":
         return {
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
-            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "max_depth": trial.suggest_int("max_depth", 3, 8),
             "subsample": trial.suggest_float("subsample", 0.6, 1.0),
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
-            "n_estimators": trial.suggest_int("n_estimators", 300, 1500),
+            "n_estimators": trial.suggest_int("n_estimators", 200, 800),
+            "early_stopping_rounds": trial.suggest_int("early_stopping_rounds", 20, 60),
         }
     if model == "mlp_features":
         hidden = tuple(

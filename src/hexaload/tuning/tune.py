@@ -293,7 +293,7 @@ def _objective(
     return objective
 
 
-def pick_best_params(study: optuna.Study) -> dict[str, Any]:
+def pick_best_trial(study: optuna.Study) -> optuna.trial.FrozenTrial:
     """Lowest MASE on the Pareto front among trials within 5% of the best CRPS."""
     front = study.best_trials  # Pareto front for multi-objective studies
     complete = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
@@ -303,8 +303,11 @@ def pick_best_params(study: optuna.Study) -> dict[str, Any]:
         front = [min(complete, key=lambda t: t.values[0])]  # type: ignore[union-attr]
     min_crps = min(t.values[1] for t in front)  # type: ignore[index]
     cands = [t for t in front if t.values[1] <= min_crps * 1.05]  # type: ignore[index]
-    best = min(cands, key=lambda t: t.values[0])  # type: ignore[index]
-    return dict(best.params)
+    return min(cands, key=lambda t: t.values[0])  # type: ignore[index]
+
+
+def pick_best_params(study: optuna.Study) -> dict[str, Any]:
+    return dict(pick_best_trial(study).params)
 
 
 def run_study(
@@ -388,17 +391,24 @@ def run_study(
         len(study.best_trials),
     )
     try:
-        best = pick_best_params(study)
+        best_trial = pick_best_trial(study)
+        best = dict(best_trial.params)
     except RuntimeError:
         logger.warning(
             "study %s: no completed trial — falling back to constructor defaults",
             study_name,
         )
+        best_trial = None
         best = default_params(model)
     with RunLogger(
         cfg, cfg.experiment, f"{model}-best", {"model": model, "kind": "best"}
     ) as rl:
         rl.params({f"best.{k}": v for k, v in best.items()})
-        rl.metrics({"pareto_size": float(len(study.best_trials))})
+        metrics = {"pareto_size": float(len(study.best_trials))}
+        if best_trial is not None and best_trial.values is not None:
+            # score of the winning trial, so the -best run is self-contained
+            metrics["mase_best"] = float(best_trial.values[0])  # type: ignore[index]
+            metrics["crps_best"] = float(best_trial.values[1])  # type: ignore[index]
+        rl.metrics(metrics)
     logger.info("%s best params: %s", model, best)
     return study, best

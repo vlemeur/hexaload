@@ -20,10 +20,15 @@ test-cov:
 check:
     uv run --locked prek run --all-files
 
-# Tune one model family (Optuna + MLflow, local SQLite/file store, offline data)
+# Tune one model family (Optuna + MLflow, local SQLite store, offline data).
+# Tuning only — use tune-eval for the hold-out afterwards.
 # e.g. just tune hgb_features,xgb_features 50 120
 tune models="hgb_features,xgb_features" trials="30" budget_minutes="90":
-    uv run --locked python scripts/tune.py --models "{{models}}" --trials {{trials}} --budget-minutes {{budget_minutes}}
+    uv run --locked python scripts/tune.py --mode tune --models "{{models}}" --trials {{trials}} --budget-minutes {{budget_minutes}}
+
+# SMOKE: 1 trial per model, tuning only — validates the whole pipeline (~10-15 min)
+smoke budget_minutes="10":
+    uv run --locked python scripts/tune.py --mode tune --trials 1 --budget-minutes {{budget_minutes}}
 
 # FULL benchmark in ONE command: tune all models -> 2026 hold-out -> backtests
 # (tuned + default). Studies are resumable: re-running adds trials.

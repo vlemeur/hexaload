@@ -253,6 +253,15 @@ def test_mini_study_and_holdout(tmp_path):
     assert all(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
     assert best == {}  # theta has no tunable params
     assert pick_best_params(study) == {}
+    # the -best run is self-contained: it carries the winning trial's score
+    best_runs = mlflow.search_runs(
+        experiment_names=[cfg.experiment], filter_string="tags.kind = 'best'"
+    )
+    assert len(best_runs) == 1
+    row = best_runs.iloc[0]
+    assert pd.notna(row["metrics.mase_best"])
+    assert pd.notna(row["metrics.crps_best"])
+    assert pd.notna(row["metrics.pareto_size"])
     # study persisted in SQLite and resumable
     study2 = optuna.load_study(
         study_name=study.study_name, storage=f"sqlite:///{tmp_path / 'optuna.db'}"
