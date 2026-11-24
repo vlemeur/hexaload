@@ -38,6 +38,7 @@ from hexaload.tuning.spaces import (
     TORCH_MODELS,
     TSFM_MODELS,
     build_model,
+    default_params,
     suggest_params,
 )
 from hexaload.tuning.tracking import RunLogger, init_mlflow
@@ -176,7 +177,34 @@ def score_folds(
     return records
 
 
-def _objective(model: str, cfg: TuningConfig, data: TuningData, progress: BaseProgress):
+def make_epoch_hook(
+    progress: BaseProgress, best_val: dict[str, float], *, warmup: int, max_epochs: int
+):
+    """Per-epoch hook for torch models during tuning.
+
+    Multi-objective Optuna does NOT support ``trial.report`` — so ASHA-style
+    pruning is done manually here: after ``warmup`` epochs, prune the trial if
+    its val_loss is more than 1.5x the best val_loss seen so far in the study
+    (``best_val`` is a mutable cell shared by all trials of the study).
+    """
+
+    def on_epoch_end(epoch: int, val_loss: float) -> None:
+        progress.context(epoch=f"{epoch}/{max_epochs}", val=f"{val_loss:.4f}")
+        if val_loss < best_val["v"]:
+            best_val["v"] = val_loss
+        if epoch >= warmup and val_loss > 1.5 * best_val["v"]:
+            raise optuna.TrialPruned()
+
+    return on_epoch_end
+
+
+def _objective(
+    model: str,
+    cfg: TuningConfig,
+    data: TuningData,
+    progress: BaseProgress,
+    best_val: dict[str, float],
+):
     """Optuna objective: mean MASE and mean CRPS over the tuning folds."""
 
     def objective(trial: optuna.Trial) -> tuple[float, float]:
@@ -187,17 +215,13 @@ def _objective(model: str, cfg: TuningConfig, data: TuningData, progress: BasePr
                 max_epochs=cfg.max_epochs_torch,
                 device=cfg.device,
                 seed=cfg.seed + trial.number,
+                on_epoch_end=make_epoch_hook(
+                    progress,
+                    best_val,
+                    warmup=cfg.prune_warmup_epochs,
+                    max_epochs=cfg.max_epochs_torch,
+                ),
             )
-
-            def on_epoch_end(epoch: int, val_loss: float) -> None:
-                trial.report(val_loss, step=epoch)
-                progress.context(
-                    epoch=f"{epoch}/{cfg.max_epochs_torch}", val=f"{val_loss:.4f}"
-                )
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-
-            params["on_epoch_end"] = on_epoch_end
         records = score_folds(model, params, data.tune_splits, data, cfg, progress)
         mase_mean = float(np.mean([r["mase"] for r in records]))
         crps_vals = [r["crps"] for r in records if r["crps"] is not None]
@@ -237,10 +261,12 @@ def run_study(
         storage=f"sqlite:///{Path(cfg.storage).resolve()}",
         directions=["minimize", "minimize"],  # (MASE, CRPS)
         sampler=optuna.samplers.NSGAIISampler(seed=cfg.seed),
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=2, n_warmup_steps=4),
+        # no pruner: multi-objective Optuna does not support trial.report,
+        # pruning is done manually in make_epoch_hook for torch models
         load_if_exists=True,
     )
     n_before = len(study.trials)
+    best_val = {"v": float("inf")}  # shared across trials: best val_loss seen
     t0 = time.perf_counter()
     # "+k/n": trials launched by THIS call (the study itself may be resumed)
     progress.context(model=model, trials=f"+{0}/{cfg.n_trials}")
@@ -271,10 +297,11 @@ def run_study(
             study.stop()
 
     study.optimize(
-        _objective(model, cfg, data, progress),
+        _objective(model, cfg, data, progress, best_val),
         n_trials=cfg.n_trials,
         callbacks=[on_trial_done],
         gc_after_trial=True,
+        catch=(Exception,),  # a failing trial must not kill the whole campaign
         show_progress_bar=False,
     )
     done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
@@ -295,7 +322,14 @@ def run_study(
         ) as rl:
             rl.params({f"p.{k}": v for k, v in t.params.items()})
             rl.metrics({"mase_mean": t.values[0], "crps_mean": t.values[1]})  # type: ignore[index]
-    best = pick_best_params(study)
+    try:
+        best = pick_best_params(study)
+    except RuntimeError:
+        logger.warning(
+            "study %s: no completed trial — falling back to constructor defaults",
+            study_name,
+        )
+        best = default_params(model)
     with RunLogger(
         cfg, cfg.experiment, f"{model}-best", {"model": model, "kind": "best"}
     ) as rl:

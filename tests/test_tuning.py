@@ -258,3 +258,35 @@ def test_score_folds_univariate_directly(tmp_path):
     records = score_folds("sktime_theta", {}, data.tune_splits, data, cfg)
     assert len(records) == 2
     assert set(records[0]) >= {"fold", "model", "mase", "crps"}
+
+
+def test_make_epoch_hook_manual_pruning():
+    # multi-objective Optuna has no trial.report -> pruning must be manual
+    from hexaload.progress import NullProgress
+    from hexaload.tuning.tune import make_epoch_hook
+
+    best = {"v": float("inf")}
+    hook = make_epoch_hook(NullProgress(), best, warmup=2, max_epochs=10)
+    hook(0, 1.0)
+    hook(1, 0.8)  # best = 0.8
+    hook(2, 0.9)  # epoch >= warmup but 0.9 < 1.5*0.8 -> kept
+    assert best["v"] == 0.8
+    with pytest.raises(optuna.TrialPruned):
+        hook(3, 2.0)  # 2.0 > 1.5*0.8 -> pruned
+
+
+def test_run_study_survives_failing_trials(tmp_path, monkeypatch):
+    # a trial raising must NOT kill the study (catch=(Exception,)), and with
+    # zero completed trials we fall back to constructor defaults
+    import hexaload.tuning.tune as tune_mod
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(tune_mod, "score_folds", boom)
+    cfg = _cfg(tmp_path)
+    data = _synth_data(tmp_path)
+    study, best = run_study("sktime_theta", cfg, data)
+    assert len(study.trials) == 2
+    assert all(t.state == optuna.trial.TrialState.FAIL for t in study.trials)
+    assert best == {}  # defaults fallback

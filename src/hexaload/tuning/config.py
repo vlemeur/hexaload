@@ -23,6 +23,7 @@ class TuningConfig:
     max_epochs_torch: int = (
         25  # cap for torch models during tuning (early stop does the rest)
     )
+    prune_warmup_epochs: int = 8  # manual ASHA pruning kicks in after this many epochs
     storage: str = "data/tuning/optuna.db"  # SQLite, resumable studies
     mlruns: str = "data/mlruns"  # MLflow file store
     out_params: str = "results/tuning/best_params.yaml"  # generated, never hand-edited
