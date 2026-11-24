@@ -13,6 +13,7 @@ from .patchtst import PatchTSTFeatures
 from .seq import RNNFeatures, TCNFeatures
 from .stats import SktimeAutoETS, SktimeTheta
 from .torch_base import TorchForecaster
+from .tsfm import ChronosBoltTSFM, TimestralTSFM, TSFMForecaster
 
 __all__ = [
     "DEFAULT_QUANTILES",
@@ -27,6 +28,9 @@ __all__ = [
     "SktimeAutoETS",
     "SktimeTheta",
     "TCNFeatures",
+    "ChronosBoltTSFM",
+    "TimestralTSFM",
+    "TSFMForecaster",
     "TorchForecaster",
     "XGBFeatures",
     "default_device",
