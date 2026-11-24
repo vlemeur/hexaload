@@ -52,8 +52,14 @@ def main() -> int:
     parser.add_argument(
         "--folds",
         type=int,
-        default=6,
+        default=3,
         help="number of tuning folds (spread pre-holdout)",
+    )
+    parser.add_argument(
+        "--tuning-window",
+        type=int,
+        default=24 * 180,
+        help="train window (hours) for TUNING folds only; hold-out/backtest keep 8760h",
     )
     parser.add_argument(
         "--mode",

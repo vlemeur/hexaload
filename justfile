@@ -33,9 +33,11 @@ smoke budget_minutes="15" max_epochs="10":
 
 # FULL benchmark in ONE command: tune all models -> 2026 hold-out -> backtests
 # (tuned + default). Studies are resumable: re-running adds trials.
-# e.g. just bench 50 180   (50 trials/model, up to 180 min budget per model)
-bench trials="50" budget_minutes="180":
-    uv run --locked python scripts/tune.py --mode full --trials {{trials}} --budget-minutes {{budget_minutes}}
+# M4-friendly defaults: 30 trials, 60 min budget/model (enforced inside trials),
+# 3 tuning folds on a 180d window (hold-out + backtests keep the full 365d window).
+# Launch in background: nohup just bench > /tmp/hexaload-bench.log 2>&1 &
+bench trials="30" budget_minutes="60":
+    uv run --locked python scripts/tune.py --mode full --trials {{trials}} --budget-minutes {{budget_minutes}} --folds 3 --tuning-window 4320 --max-epochs 20
 
 # Evaluate the tuned best params on the reserved 2026 hold-out (touched once)
 tune-eval:
