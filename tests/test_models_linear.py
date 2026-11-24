@@ -63,3 +63,21 @@ def test_nan_rows_and_missing_columns() -> None:
         m.predict(X.index)
     with pytest.raises(ValueError, match="missing feature columns"):
         m.predict(X.index, X.drop(columns=["f1"]))
+
+
+def test_predict_quantiles_conformal() -> None:
+    X, y = make_xy()
+    y_tr, X_tr, test_idx, X_te = split(X, y)
+    m = RidgeFeatures().fit(y_tr, X_tr)
+    q = m.predict_quantiles(test_idx, X_te, (0.05, 0.5, 0.95))
+    assert q.index.equals(pd.DatetimeIndex(test_idx))
+    assert list(q.columns) == ["q0.05", "q0.5", "q0.95"]
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    pred = m.predict(test_idx, X_te)
+    # median quantile tracks the point forecast on this near-linear synthetic
+    assert (q["q0.5"] - pred).abs().max() < 5.0
+    # coverage: residuals are tiny -> almost all test y inside [q0.05, q0.95]
+    y_te = y.loc[test_idx]
+    inside = ((y_te >= q["q0.05"]) & (y_te <= q["q0.95"])).mean()
+    assert inside >= 0.8  # 90% nominal interval, small synthetic sample

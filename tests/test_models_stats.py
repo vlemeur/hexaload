@@ -64,3 +64,18 @@ def test_no_timezone_drop_warning_and_tz_preserved() -> None:
     assert not [w for w in rec if "timezone" in str(w.message).lower()]
     assert pred.index.equals(test)  # tz-aware UTC index preserved on output
     assert str(pd.DatetimeIndex(pred.index).tz) == "UTC"
+
+
+@pytest.mark.parametrize("cls", [SktimeAutoETS, SktimeTheta])
+def test_predict_quantiles(cls: type) -> None:
+    y = make_y()
+    train, test = y.iloc[:-24], pd.DatetimeIndex(y.index[-24:])
+    m = cls().fit(train)
+    q = m.predict_quantiles(test, quantiles=(0.05, 0.5, 0.95))
+    assert q.shape == (24, 3)
+    assert list(q.columns) == ["q0.05", "q0.5", "q0.95"]
+    assert q.index.equals(test)
+    assert str(pd.DatetimeIndex(q.index).tz) == "UTC"
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    assert q.notna().all().all()

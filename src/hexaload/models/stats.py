@@ -17,7 +17,7 @@ from sktime.forecasting.base import ForecastingHorizon
 from sktime.forecasting.ets import AutoETS
 from sktime.forecasting.theta import ThetaForecaster
 
-from .base import BaseForecaster
+from .base import DEFAULT_QUANTILES, BaseForecaster
 
 
 def _hourly_grid(y: pd.Series) -> pd.Series:
@@ -63,6 +63,28 @@ class SktimeForecaster(BaseForecaster):
         fh = ForecastingHorizon(test.tz_localize(None), is_relative=False)
         pred = self._fitted.predict(fh=fh)
         return pd.Series(pred.to_numpy(), index=test, name="y_pred")
+
+    def predict_quantiles(
+        self,
+        test: pd.Index,
+        X_future: pd.DataFrame | None = None,
+        quantiles: tuple[float, ...] = DEFAULT_QUANTILES,
+    ) -> pd.DataFrame:
+        """Quantiles from the wrapped sktime forecaster (analytic intervals for
+        statsmodels-backed models), re-indexed on the tz-aware ``test``."""
+        if self._fitted is None:
+            raise RuntimeError("call fit() before predict_quantiles()")
+        test = pd.DatetimeIndex(test)
+        fh = ForecastingHorizon(test.tz_localize(None), is_relative=False)
+        q = self._fitted.predict_quantiles(fh=fh, alpha=list(quantiles))
+        # sktime returns a DataFrame (time x levels) with MultiIndex columns
+        # (variable, alpha) on a naive index — normalize to q<level> columns
+        var = q.columns.get_level_values(0)[0]
+        vals = q.loc[:, [(var, a) for a in quantiles]].to_numpy(dtype=float)
+        return pd.DataFrame(
+            {f"q{a:g}": vals[:, k] for k, a in enumerate(quantiles)},
+            index=test,
+        )
 
 
 class SktimeAutoETS(SktimeForecaster):

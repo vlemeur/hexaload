@@ -4,7 +4,8 @@ Second feature-based family after the ridge. HGBR handles NaN features
 natively (no imputer needed) and supports early stopping on an explicit
 validation split. Anti-leakage: the validation split is the TAIL of the train
 fold, passed as ``X_val``/``y_val`` so sklearn does not shuffle — the test
-block is never touched.
+block is never touched. That same tail doubles as the split-conformal
+calibration set for ``predict_quantiles``.
 """
 
 from __future__ import annotations
@@ -13,14 +14,16 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-from .base import BaseForecaster
+from hexaload.metrics import quantile_frame
+
+from .base import DEFAULT_QUANTILES, BaseForecaster
 
 
 class HGBFeatures(BaseForecaster):
     """HistGradientBoostingRegressor on the feature table.
 
-    Common hexaload interface: ``.fit(y_train, X_train)`` and
-    ``.predict(test, X_future)``.
+    Common hexaload interface: ``.fit(y_train, X_train)``,
+    ``.predict(test, X_future)`` and ``.predict_quantiles(...)``.
     """
 
     def __init__(
@@ -45,13 +48,12 @@ class HGBFeatures(BaseForecaster):
         self._random_state = random_state
         self._model: HistGradientBoostingRegressor | None = None
         self._cols: list[str] | None = None
+        self._resid: np.ndarray | None = None
 
     def fit(
         self, y_train: pd.Series, X_train: pd.DataFrame | None = None
     ) -> HGBFeatures:
-        """
-        Fit on the train fold; the last ``val_hours`` rows are the validation tail.
-        """
+        """Fit with early stopping on the train-fold tail (validation split)."""
         if X_train is None:
             raise ValueError("HGBFeatures is feature-based: X_train is required")
         y = y_train.reindex(X_train.index)
@@ -73,6 +75,8 @@ class HGBFeatures(BaseForecaster):
         model.fit(X_fit, y_fit, X_val=X_val, y_val=y_val)
         self._model = model
         self._cols = list(X_train.columns)
+        # split-conformal calibration residuals on the validation tail
+        self._resid = (y_val - model.predict(X_val)).to_numpy(dtype=float)
         return self
 
     def predict(
@@ -91,3 +95,16 @@ class HGBFeatures(BaseForecaster):
             raise ValueError(f"missing feature columns: {missing[:5]}")
         pred = model.predict(Xt[cols])
         return pd.Series(np.clip(pred, 0.0, None), index=test, name="y_pred")
+
+    def predict_quantiles(
+        self,
+        test: pd.Index,
+        X_future: pd.DataFrame | None = None,
+        quantiles: tuple[float, ...] = DEFAULT_QUANTILES,
+    ) -> pd.DataFrame:
+        """Split-conformal quantiles: point forecast + quantiles of the
+        validation-tail residuals (same split as early stopping, no leakage)."""
+        pred = self.predict(test, X_future)
+        if self._resid is None:
+            raise RuntimeError("call fit() before predict_quantiles()")
+        return quantile_frame(pred, self._resid, quantiles)

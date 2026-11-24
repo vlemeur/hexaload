@@ -82,3 +82,16 @@ def test_validation_tail_is_used_and_train_too_short_raises() -> None:
     assert m._model is not None
     assert 1 <= m._model.n_iter_ <= 200
     assert m.predict(test_idx, X_te).notna().all()
+
+
+def test_predict_quantiles_conformal_coverage() -> None:
+    X, y = make_xy()
+    y_tr, X_tr, test_idx, X_te = split(X, y)
+    m = HGBFeatures(max_iter=200).fit(y_tr, X_tr)
+    q = m.predict_quantiles(test_idx, X_te, (0.05, 0.5, 0.95))
+    assert q.index.equals(pd.DatetimeIndex(test_idx))
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    y_te = y.loc[test_idx]
+    inside = ((y_te >= q["q0.05"]) & (y_te <= q["q0.95"])).mean()
+    assert inside >= 0.8  # 90% nominal interval, small synthetic sample

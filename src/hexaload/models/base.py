@@ -22,6 +22,9 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 
+# default quantile grid for predict_quantiles / CRPS sampling: 0.05 .. 0.95
+DEFAULT_QUANTILES: tuple[float, ...] = tuple(round(0.05 * i, 2) for i in range(1, 20))
+
 
 class BaseForecaster(ABC):
     """Common interface: fit on a train fold, predict a test block."""
@@ -41,3 +44,16 @@ class BaseForecaster(ABC):
         Returns a Series named ``y_pred`` indexed by ``test``. Feature-based
         models require ``X_future`` covering ``test``.
         """
+
+    def predict_quantiles(
+        self,
+        test: pd.Index,
+        X_future: pd.DataFrame | None = None,
+        quantiles: tuple[float, ...] = DEFAULT_QUANTILES,
+    ) -> pd.DataFrame:
+        """Quantile forecast over ``test``: DataFrame indexed by ``test``, one
+        column per level (``q0.05``, ``q0.1``, ...).
+
+        Point-only models raise NotImplementedError and are scored without CRPS.
+        """
+        raise NotImplementedError

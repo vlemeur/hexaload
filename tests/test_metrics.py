@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hexaload.metrics import crps, mae, mase, rmse
+from hexaload.metrics import crps, mae, mase, quantile_frame, rmse, sample_quantiles
 
 
 def series(vals: list[float], start: str = "2023-01-01") -> pd.Series:
@@ -88,3 +88,51 @@ def test_crps_penalizes_bias_and_is_nonnegative() -> None:
     biased = good + 5.0
     assert crps(y, good) >= 0.0
     assert crps(y, biased) > crps(y, good)
+
+
+def test_quantile_frame_columns_order_and_shift() -> None:
+    idx = pd.date_range("2023-01-01", periods=4, freq="1h", tz="UTC")
+    pred = pd.Series([10.0] * 4, index=idx)
+    resid = np.array([-1.0, 0.0, 1.0, 2.0])
+    q = quantile_frame(pred, resid, (0.05, 0.5, 0.95))
+    assert list(q.columns) == ["q0.05", "q0.5", "q0.95"]
+    assert q.index.equals(idx)
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    # residuals shifted by +1 -> median = pred + median(resid)
+    assert q["q0.5"].iloc[0] == pytest.approx(10.0 + 0.5)
+
+
+def test_quantile_frame_empty_residuals_raises() -> None:
+    idx = pd.date_range("2023-01-01", periods=2, freq="1h", tz="UTC")
+    with pytest.raises(ValueError, match="no calibration residuals"):
+        quantile_frame(pd.Series([1.0, 2.0], index=idx), np.array([]), (0.5,))
+
+
+def test_sample_quantiles_constant_qdf_gives_constant_samples() -> None:
+    idx = pd.date_range("2023-01-01", periods=3, freq="1h", tz="UTC")
+    qdf = pd.DataFrame({f"q{a:g}": [5.0] * 3 for a in (0.05, 0.5, 0.95)}, index=idx)
+    s = sample_quantiles(qdf, (0.05, 0.5, 0.95), n_samples=10, seed=0)
+    assert s.shape == (3, 10)
+    assert s.index.equals(idx)
+    assert np.allclose(s.to_numpy(), 5.0)
+
+
+def test_sample_quantiles_recovers_location_and_is_deterministic() -> None:
+    idx = pd.date_range("2023-01-01", periods=2, freq="1h", tz="UTC")
+    qdf = pd.DataFrame(
+        {"q0.05": [-1.0, -1.0], "q0.5": [0.0, 0.0], "q0.95": [1.0, 1.0]}, index=idx
+    )
+    s1 = sample_quantiles(qdf, (0.05, 0.5, 0.95), n_samples=4000, seed=0)
+    s2 = sample_quantiles(qdf, (0.05, 0.5, 0.95), n_samples=4000, seed=0)
+    pd.testing.assert_frame_equal(s1, s2)  # seeded -> reproducible
+    assert abs(float(s1.to_numpy().mean())) < 0.1  # symmetric around 0
+    assert float(s1.to_numpy().min()) >= -1.0  # clamped at the edge quantiles
+    assert float(s1.to_numpy().max()) <= 1.0
+
+
+def test_sample_quantiles_column_mismatch_raises() -> None:
+    idx = pd.date_range("2023-01-01", periods=2, freq="1h", tz="UTC")
+    qdf = pd.DataFrame({"q0.5": [0.0, 0.0]}, index=idx)
+    with pytest.raises(ValueError, match="columns"):
+        sample_quantiles(qdf, (0.05, 0.5), n_samples=5)

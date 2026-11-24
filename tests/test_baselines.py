@@ -5,9 +5,12 @@ import pandas as pd
 import pytest
 
 from hexaload.backtest.baselines import (
+    naive_residuals,
     predict_naive,
     predict_rte_prevision_j1,
     predict_seasonal_naive,
+    residual_quantiles,
+    seasonal_residuals,
 )
 
 
@@ -52,3 +55,34 @@ def test_rte_reference_reindexes_on_test() -> None:
         ref, pd.DatetimeIndex([test[0], test[0] + pd.Timedelta(days=365)], tz="UTC")
     )
     assert np.isnan(pred_gap.iloc[1])
+
+
+def test_naive_residuals_are_one_step_diffs() -> None:
+    y = hourly([float(i) for i in range(10)])
+    r = naive_residuals(y)
+    assert len(r) == 9
+    assert (r == 1.0).all()
+
+
+def test_seasonal_residuals_use_time_shift_not_positions() -> None:
+    y = hourly([float(i % 24) for i in range(24 * 5)])
+    y = y.drop(y.index[30])  # hole -> positional shift would misalign
+    r = seasonal_residuals(y, sp=24)
+    # 119 points after the hole: 24 warm-up (source before start) + 1 whose
+    # source is the hole -> 119 - 24 - 1 = 94 residuals
+    assert len(r) == len(y) - 24 - 1
+    assert (r == 0.0).all()  # y(t) == y(t-24h) for this series
+
+
+def test_residual_quantiles_conformal_around_point() -> None:
+    y = hourly([float(i) for i in range(100)])
+    train = pd.DatetimeIndex(y.index[:80])
+    test = pd.DatetimeIndex(y.index[80:90])
+    pred = predict_naive(y.loc[train], test)
+    q = residual_quantiles(pred, naive_residuals(y.loc[train]), (0.05, 0.5, 0.95))
+    assert q.index.equals(pred.index)
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    # all residuals == 1.0 -> every quantile = pred + 1
+    assert (q["q0.5"] == pred + 1.0).all()
+    assert (q["q0.95"] == pred + 1.0).all()
