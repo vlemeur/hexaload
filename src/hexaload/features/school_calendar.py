@@ -5,7 +5,7 @@ Source: data.gouv.fr dataset "vacances-scolaires-par-zones", resource
 day, 1990 -> 2030, boolean flags per zone A/B/C plus the vacation name.
 
 Network lives here (and only here); the validated result is embedded as a
-versioned CSV inside the package (``features/data/school_vacations_fr.csv``)
+versioned CSV inside the package (``features/assets/school_vacations_fr.csv``)
 so the backtest runs fully offline. ``scripts/build_school_calendar.py`` is
 the thin CLI over this module.
 """

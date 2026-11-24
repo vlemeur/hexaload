@@ -6,7 +6,7 @@ updated):
 
 The raw CSV is cached under data/cache/school-vacations/ (offline replay)
 and the validated copy is embedded at
-src/hexaload/features/data/school_vacations_fr.csv (versioned in git: the
+src/hexaload/features/assets/school_vacations_fr.csv (versioned in git: the
 backtest must run fully offline). Logic lives in
 hexaload.features.school_calendar (tested offline with mocked HTTP).
 """

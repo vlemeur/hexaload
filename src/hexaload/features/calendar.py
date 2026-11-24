@@ -3,7 +3,7 @@
 Public holidays come from the ``holidays`` package; school vacations by zone
 (A/B/C) from the official data.gouv.fr dataset "Vacances scolaires par zones"
 (github.com/AntoineAugusti/vacances-scolaires), embedded as a versioned CSV
-under ``features/data/`` by ``scripts/build_school_calendar.py`` so the
+under ``features/assets/`` by ``scripts/build_school_calendar.py`` so the
 backtest runs fully offline.
 
 All day-level flags are computed in Europe/Paris local time (a public holiday
@@ -30,7 +30,7 @@ from .base import FeatureBlock, as_utc_hourly_index
 logger = logging.getLogger(__name__)
 
 TZ_PARIS = "Europe/Paris"
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path(__file__).parent / "assets"
 SCHOOL_VACATIONS_CSV = DATA_DIR / "school_vacations_fr.csv"
 
 CAL_COLUMNS = (
