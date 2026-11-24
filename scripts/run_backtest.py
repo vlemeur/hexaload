@@ -43,8 +43,10 @@ from hexaload.data.fetch import stitch_eco2mix
 from hexaload.metrics import DEFAULT_SP, crps, mae, mase, rmse, sample_quantiles
 from hexaload.models import (
     DEFAULT_QUANTILES,
+    NHITS,
     HGBFeatures,
     MLPFeatures,
+    PatchTSTFeatures,
     RidgeFeatures,
     RNNFeatures,
     SktimeAutoETS,
@@ -176,6 +178,7 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                 ("mlp_features", MLPFeatures),
                 ("rnn_features", RNNFeatures),
                 ("tcn_features", TCNFeatures),
+                ("patchtst_features", PatchTSTFeatures),
             ):
                 if name in skip:
                     continue
@@ -198,6 +201,7 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
         for name, model_cls in (
             ("sktime_autoets", SktimeAutoETS),
             ("sktime_theta", SktimeTheta),
+            ("nhits", NHITS),
         ):
             if name in skip:
                 continue

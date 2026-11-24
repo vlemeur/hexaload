@@ -8,6 +8,8 @@ from .base import DEFAULT_QUANTILES, BaseForecaster
 from .gbm import GBMBase, HGBFeatures, XGBFeatures
 from .linear import RidgeFeatures
 from .mlp import MLPFeatures
+from .nhits import NHITS
+from .patchtst import PatchTSTFeatures
 from .seq import RNNFeatures, TCNFeatures
 from .stats import SktimeAutoETS, SktimeTheta
 from .torch_base import TorchForecaster
@@ -18,6 +20,8 @@ __all__ = [
     "GBMBase",
     "HGBFeatures",
     "MLPFeatures",
+    "NHITS",
+    "PatchTSTFeatures",
     "RNNFeatures",
     "RidgeFeatures",
     "SktimeAutoETS",
