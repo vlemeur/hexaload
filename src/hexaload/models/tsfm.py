@@ -29,6 +29,9 @@ TIMESTRAL_209M = "mistralai/Timestral-209M"
 CHRONOS_BOLT_BASE = "amazon/chronos-bolt-base"
 
 
+_PIPE_CACHE: dict[tuple[str, str, str], Any] = {}  # (backend, repo_id, device) -> pipe
+
+
 class TSFMForecaster(BaseForecaster):
     """Common wrapper for zero-shot TSFMs.
 
@@ -56,7 +59,12 @@ class TSFMForecaster(BaseForecaster):
         self._cache_pred: pd.Series | None = None
 
     def _load(self) -> None:
-        """Download/load the pretrained pipeline (lazy; cached on disk by HF)."""
+        """Load the pretrained pipeline once per process (HF disk cache avoids
+        re-downloading; the class-level cache avoids re-loading per fold)."""
+        key = (self._backend, self._repo_id, self._device)
+        if key in _PIPE_CACHE:
+            self._pipe = _PIPE_CACHE[key]
+            return
         if self._backend == "timestral":
             from timestral import TimestralForecaster
 
@@ -71,6 +79,7 @@ class TSFMForecaster(BaseForecaster):
             )
         else:
             raise ValueError(f"unknown TSFM backend {self._backend!r}")
+        _PIPE_CACHE[key] = self._pipe
 
     def fit(
         self, y_train: pd.Series, X_train: pd.DataFrame | None = None

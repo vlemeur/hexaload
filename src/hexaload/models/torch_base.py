@@ -225,6 +225,8 @@ class TorchForecaster(BaseForecaster):
         if best_state is not None:
             module.load_state_dict(best_state)
         module.eval()
+        if self._device == "mps":
+            torch.mps.empty_cache()  # MPS cache is not returned between fits -> OOM
         self._module = module
         self._X_tail = Xv[-self._input_size :].copy()
         self._cols_fit = list(X.columns)
