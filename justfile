@@ -25,6 +25,12 @@ check:
 tune models="hgb_features,xgb_features" trials="30" budget_minutes="90":
     uv run --locked python scripts/tune.py --models "{{models}}" --trials {{trials}} --budget-minutes {{budget_minutes}}
 
+# FULL benchmark in ONE command: tune all models -> 2026 hold-out -> backtests
+# (tuned + default). Studies are resumable: re-running adds trials.
+# e.g. just bench 50 180   (50 trials/model, up to 180 min budget per model)
+bench trials="50" budget_minutes="180":
+    uv run --locked python scripts/tune.py --mode full --trials {{trials}} --budget-minutes {{budget_minutes}}
+
 # Evaluate the tuned best params on the reserved 2026 hold-out (touched once)
 tune-eval:
     uv run --locked python scripts/tune.py --mode eval

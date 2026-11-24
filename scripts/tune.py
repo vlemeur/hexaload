@@ -21,6 +21,7 @@ import logging
 import sys
 from pathlib import Path
 
+from hexaload.progress import Progress, setup_logging
 from hexaload.results.table import summarize, write_table
 from hexaload.tuning.config import TuningConfig
 from hexaload.tuning.evaluate import run_holdout
@@ -56,16 +57,20 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=("tune", "eval", "all"),
+        choices=("tune", "eval", "all", "full"),
         default="all",
-        help="tune: Optuna only | eval: hold-out from best_params.yaml only | all",
+        help="tune: Optuna only | eval: hold-out only | all: tune+eval | "
+        "full: all + backtests (tuned and default) in one command",
     )
     parser.add_argument("--device", default=None, help="cpu|mps|cuda (default: auto)")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="keep optuna/mlflow/data logs (default: quiet, bar stays readable)",
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-    )
+    setup_logging(verbose=args.verbose)
 
     cfg = TuningConfig(
         models=[m.strip() for m in args.models.split(",") if m.strip()],
@@ -77,34 +82,66 @@ def main() -> int:
     init_mlflow(cfg)
     data = load_tuning_data(cfg)
 
-    if args.mode in ("tune", "all"):
-        best_all = load_best_params(cfg.out_params)
-        for model in cfg.models:
-            _study, best = run_study(model, cfg, data)
-            best_all[model] = best
-        save_best_params(best_all, cfg.out_params)
+    # one bar for the whole campaign: n_trials per model in tuning + 1 eval per model
+    doing_all = args.mode in ("tune", "all", "full")
+    n_tune = len(cfg.models) * cfg.n_trials if doing_all else 0
+    n_eval = len(cfg.models) if args.mode in ("eval", "all", "full") else 0
+    with Progress(total=max(1, n_tune + n_eval), desc=args.mode, unit="run") as prog:
+        if doing_all:
+            best_all = load_best_params(cfg.out_params)
+            for model in cfg.models:
+                _study, best = run_study(model, cfg, data, prog)
+                best_all[model] = best
+            save_best_params(best_all, cfg.out_params)
 
-    if args.mode in ("eval", "all"):
-        best_all = load_best_params(cfg.out_params)
-        missing = [m for m in cfg.models if m not in best_all]
-        if missing:
-            logger.warning(
-                "no tuned params in %s for %s — falling back to defaults",
-                cfg.out_params,
-                missing,
-            )
-        records: list[dict] = []
-        for model in cfg.models:
-            records.extend(
-                run_holdout(
-                    model, best_all.get(model, default_params(model)), cfg, data
+        if args.mode in ("eval", "all", "full"):
+            best_all = load_best_params(cfg.out_params)
+            missing = [m for m in cfg.models if m not in best_all]
+            if missing:
+                logger.warning(
+                    "no tuned params in %s for %s — falling back to defaults",
+                    cfg.out_params,
+                    missing,
                 )
+            records: list[dict] = []
+            for model in cfg.models:
+                records.extend(
+                    run_holdout(
+                        model,
+                        best_all.get(model, default_params(model)),
+                        cfg,
+                        data,
+                        prog,
+                    )
+                )
+            table = summarize(records)
+            out = Path("results/tuning/holdout.parquet")
+            write_table(table, out, out.with_suffix(".md"))
+            logger.info("wrote %s and %s", out, out.with_suffix(".md"))
+            print(table.to_string(index=False))
+
+    if args.mode == "full":
+        # everything evaluated on the same folds, one command: tuned then default
+        from hexaload.backtest.run import BacktestConfig
+        from hexaload.backtest.run import run as backtest_run
+
+        base = dict(
+            start=cfg.start,
+            end=cfg.end,
+            horizon=cfg.horizon,
+            window_length=cfg.window_length,
+            step_length=cfg.step_length,
+        )
+        logger.info("backtest with tuned params -> results/backtest_tuned.parquet")
+        backtest_run(
+            BacktestConfig(
+                **base, params=cfg.out_params, out="results/backtest_tuned.parquet"
             )
-        table = summarize(records)
-        out = Path("results/tuning/holdout.parquet")
-        write_table(table, out, out.with_suffix(".md"))
-        logger.info("wrote %s and %s", out, out.with_suffix(".md"))
-        print(table.to_string(index=False))
+        )
+        logger.info(
+            "backtest with constructor defaults -> results/backtest_default.parquet"
+        )
+        backtest_run(BacktestConfig(**base, out="results/backtest_default.parquet"))
     return 0
 
 

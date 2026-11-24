@@ -31,6 +31,7 @@ from hexaload.backtest.load import exogenous_columns, load_features, load_target
 from hexaload.backtest.walkforward import Split, walk_forward_splits
 from hexaload.metrics import DEFAULT_SP, crps, mase, sample_quantiles
 from hexaload.models import DEFAULT_QUANTILES
+from hexaload.progress import BaseProgress, NullProgress
 from hexaload.tuning.config import TuningConfig
 from hexaload.tuning.spaces import (
     FEATURE_MODELS,
@@ -124,10 +125,13 @@ def score_folds(
     splits: list[Split],
     data: TuningData,
     cfg: TuningConfig,
+    progress: BaseProgress | None = None,
 ) -> list[dict]:
     """One record (mase/crps) per fold for a model instantiated with ``params``."""
+    progress = progress or NullProgress()
     records: list[dict] = []
     for split in splits:
+        progress.context(fold=str(split.test_start.date()))
         y_train = data.y.loc[split.train]
         y_test = data.y.loc[split.test]
         X_fold = (
@@ -172,10 +176,11 @@ def score_folds(
     return records
 
 
-def _objective(model: str, cfg: TuningConfig, data: TuningData):
+def _objective(model: str, cfg: TuningConfig, data: TuningData, progress: BaseProgress):
     """Optuna objective: mean MASE and mean CRPS over the tuning folds."""
 
     def objective(trial: optuna.Trial) -> tuple[float, float]:
+        progress.context(model=model, trial=f"{trial.number}")
         params = suggest_params(model, trial)
         if model in TORCH_MODELS:
             params.update(
@@ -186,11 +191,14 @@ def _objective(model: str, cfg: TuningConfig, data: TuningData):
 
             def on_epoch_end(epoch: int, val_loss: float) -> None:
                 trial.report(val_loss, step=epoch)
+                progress.context(
+                    epoch=f"{epoch}/{cfg.max_epochs_torch}", val=f"{val_loss:.4f}"
+                )
                 if trial.should_prune():
                     raise optuna.TrialPruned()
 
             params["on_epoch_end"] = on_epoch_end
-        records = score_folds(model, params, data.tune_splits, data, cfg)
+        records = score_folds(model, params, data.tune_splits, data, cfg, progress)
         mase_mean = float(np.mean([r["mase"] for r in records]))
         crps_vals = [r["crps"] for r in records if r["crps"] is not None]
         crps_mean = float(np.mean(crps_vals)) if crps_vals else PENALTY
@@ -214,9 +222,13 @@ def pick_best_params(study: optuna.Study) -> dict[str, Any]:
 
 
 def run_study(
-    model: str, cfg: TuningConfig, data: TuningData
+    model: str,
+    cfg: TuningConfig,
+    data: TuningData,
+    progress: BaseProgress | None = None,
 ) -> tuple[optuna.Study, dict[str, Any]]:
     """Run (or resume) the Optuna study for one model; log trials to MLflow."""
+    progress = progress or NullProgress()
     init_mlflow(cfg)
     Path(cfg.storage).parent.mkdir(parents=True, exist_ok=True)
     study_name = f"hexaload-{model}"
@@ -230,8 +242,26 @@ def run_study(
     )
     n_before = len(study.trials)
     t0 = time.perf_counter()
+    # "+k/n": trials launched by THIS call (the study itself may be resumed)
+    progress.context(model=model, trials=f"+{0}/{cfg.n_trials}")
 
-    def budget_cb(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+    def on_trial_done(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+        # advance the global bar after every trial (complete or pruned)
+        progress.context(
+            model=model, trials=f"+{len(study.trials) - n_before}/{cfg.n_trials}"
+        )
+        if trial.state == optuna.trial.TrialState.COMPLETE:
+            progress.advance(
+                1,
+                model=model,
+                trial=f"{trial.number}",
+                mase=f"{trial.values[0]:.4f}",  # type: ignore[index]
+                crps=f"{trial.values[1]:.0f}",  # type: ignore[index]
+            )
+        else:
+            progress.advance(
+                1, model=model, trial=f"{trial.number}", state=trial.state.name.lower()
+            )
         if time.perf_counter() - t0 > cfg.budget_minutes * 60:
             logger.info(
                 "budget %.0f min exhausted — stopping study %s",
@@ -241,9 +271,9 @@ def run_study(
             study.stop()
 
     study.optimize(
-        _objective(model, cfg, data),
+        _objective(model, cfg, data, progress),
         n_trials=cfg.n_trials,
-        callbacks=[budget_cb],
+        callbacks=[on_trial_done],
         gc_after_trial=True,
         show_progress_bar=False,
     )

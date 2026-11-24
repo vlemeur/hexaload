@@ -20,14 +20,20 @@ from .config import TuningConfig
 logger = logging.getLogger(__name__)
 
 
+_last_uri: str | None = None  # log the tracking URI only once per process
+
+
 def init_mlflow(cfg: TuningConfig) -> str:
-    """Point MLflow at the local SQLite store; return the tracking URI."""
+    """Point MLflow at the local SQLite store; return the tracking URI (idempotent)."""
+    global _last_uri
     db = Path(cfg.mlruns).resolve() / "mlflow.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     uri = f"sqlite:///{db}"
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(cfg.experiment)
-    logger.info("mlflow tracking uri: %s (experiment %s)", uri, cfg.experiment)
+    if uri != _last_uri:
+        logger.info("mlflow tracking uri: %s (experiment %s)", uri, cfg.experiment)
+        _last_uri = uri
     return uri
 
 

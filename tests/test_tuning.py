@@ -77,6 +77,17 @@ def test_suggest_unknown_model_is_empty():
     study.tell(trial, 1.0)
 
 
+def test_init_mlflow_logs_uri_once(tmp_path, caplog):
+    import logging as _logging
+
+    cfg = TuningConfig(mlruns=str(tmp_path / "mlruns"), experiment="test-exp")
+    with caplog.at_level(_logging.INFO, logger="hexaload.tuning.tracking"):
+        init_mlflow(cfg)
+        init_mlflow(cfg)  # idempotent: no second INFO line
+    lines = [r.getMessage() for r in caplog.records if "tracking uri" in r.getMessage()]
+    assert len(lines) == 1
+
+
 def test_run_logger_writes_local_file_store(tmp_path):
     cfg = TuningConfig(mlruns=str(tmp_path / "mlruns"), experiment="test-exp")
     uri = init_mlflow(cfg)
