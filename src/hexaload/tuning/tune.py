@@ -225,15 +225,23 @@ def _objective(
     progress: BaseProgress,
     best_by_trial: dict[int, float],
     run_factory: Any,
+    deadline: float | None = None,
 ):
     """Optuna objective: mean MASE and mean CRPS over the tuning folds.
 
     One MLflow run is opened PER TRIAL (via ``run_factory``) so that per-fold
     metrics and torch val_loss-per-epoch are logged with steps, like onomatron.
+    ``deadline`` (perf_counter timestamp) is checked after every fold and every
+    epoch: a trial that exceeds the wall-clock budget is pruned mid-flight.
     """
 
     def objective(trial: optuna.Trial) -> tuple[float, float]:
         progress.context(model=model, trial=f"{trial.number}")
+
+        def check_deadline() -> None:
+            if deadline is not None and time.perf_counter() > deadline:
+                raise optuna.TrialPruned("wall-clock budget exhausted")
+
         params = suggest_params(model, trial)
         with run_factory(trial) as run:
             run.params({**params, "model": model, "seed": cfg.seed + trial.number})
@@ -248,20 +256,23 @@ def _objective(
                         num_workers=4,
                         use_amp=True,
                     )
+                    prune_hook = make_epoch_hook(
+                        progress,
+                        best_by_trial,
+                        trial_number=trial.number,
+                        warmup=cfg.prune_warmup_epochs,
+                        max_epochs=cfg.max_epochs_torch,
+                    )
 
                     def on_epoch_end(epoch: int, val_loss: float) -> None:
+                        check_deadline()
                         run.metric("val_loss", val_loss, step=epoch)
-                        make_epoch_hook(
-                            progress,
-                            best_by_trial,
-                            trial_number=trial.number,
-                            warmup=cfg.prune_warmup_epochs,
-                            max_epochs=cfg.max_epochs_torch,
-                        )(epoch, val_loss)
+                        prune_hook(epoch, val_loss)
 
                     params["on_epoch_end"] = on_epoch_end
 
                 def on_fold(i: int, rec: dict) -> None:
+                    check_deadline()
                     m = {"mase": rec["mase"]}
                     if rec.get("crps") is not None:
                         m["crps"] = rec["crps"]
@@ -336,6 +347,7 @@ def run_study(
         t.number: float("inf") for t in study.trials if t.number is not None
     }
     t0 = time.perf_counter()
+    deadline = t0 + cfg.budget_minutes * 60  # also enforced INSIDE each trial
     # "+k/n": trials launched by THIS call (the study itself may be resumed)
     progress.context(model=model, trials=f"+{0}/{cfg.n_trials}")
 
@@ -374,7 +386,7 @@ def run_study(
         )
 
     study.optimize(
-        _objective(model, cfg, data, progress, best_by_trial, run_factory),
+        _objective(model, cfg, data, progress, best_by_trial, run_factory, deadline),
         n_trials=cfg.n_trials,
         callbacks=[on_trial_done],
         gc_after_trial=True,

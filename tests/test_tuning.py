@@ -342,6 +342,31 @@ def test_run_study_survives_failing_trials(tmp_path, monkeypatch):
     assert len(runs) == 2
 
 
+def test_budget_prunes_trial_mid_flight(tmp_path, monkeypatch):
+    # budget_minutes=0 -> deadline already passed: the FIRST fold check must
+    # prune the trial (not let it run to completion)
+    import time as _time
+
+    import hexaload.tuning.tune as tune_mod
+
+    cfg = _cfg(tmp_path)
+    cfg.budget_minutes = 0.0
+    data = _synth_data(tmp_path)
+    real = tune_mod.score_folds
+
+    def slow(*a, **k):
+        _time.sleep(0.01)
+        return real(*a, **k)
+
+    monkeypatch.setattr(tune_mod, "score_folds", slow)
+    study, best = run_study("sktime_theta", cfg, data)
+    # trial 0 is pruned mid-flight by the deadline; the between-trials callback
+    # then sees the budget exhausted and stops the study (1 or 2 trials total)
+    assert 1 <= len(study.trials) <= 2
+    assert all(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+    assert best == {}  # no complete trial -> defaults fallback
+
+
 def test_mini_study_logs_per_fold_metrics(tmp_path):
     cfg = _cfg(tmp_path)
     data = _synth_data(tmp_path)
