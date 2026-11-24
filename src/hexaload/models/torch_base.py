@@ -230,8 +230,10 @@ class TorchForecaster(BaseForecaster):
         x_fut_t = torch.from_numpy(x_fut).to(self._device)
         with torch.no_grad():
             out = module(x_hist, x_fut_t)  # (1,H,Q)
-        # un-standardize the target
-        return (out[0].cpu().numpy() * self._y_std + self._y_mean).astype(np.float64)
+        # un-standardize the target, then sort along the quantile axis to
+        # guarantee monotonicity (pinball heads can cross early in training)
+        q = (out[0].cpu().numpy() * self._y_std + self._y_mean).astype(np.float64)
+        return np.sort(q, axis=1)  # (H,Q)
 
     def predict(
         self, test: pd.Index, X_future: pd.DataFrame | None = None

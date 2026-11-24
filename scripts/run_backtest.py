@@ -46,8 +46,10 @@ from hexaload.models import (
     HGBFeatures,
     MLPFeatures,
     RidgeFeatures,
+    RNNFeatures,
     SktimeAutoETS,
     SktimeTheta,
+    TCNFeatures,
     XGBFeatures,
 )
 from hexaload.results.table import summarize, write_table
@@ -172,6 +174,8 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
                 ("hgb_features", HGBFeatures),
                 ("xgb_features", XGBFeatures),
                 ("mlp_features", MLPFeatures),
+                ("rnn_features", RNNFeatures),
+                ("tcn_features", TCNFeatures),
             ):
                 if name in skip:
                     continue
