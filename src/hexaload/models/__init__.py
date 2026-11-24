@@ -1,5 +1,20 @@
-"""Model families — one common interface: .fit(X_train, y_train), .predict(X_future)."""
+"""Model families — one common interface.
 
+``.fit(y_train, X_train=None)`` / ``.predict(test, X_future=None)``.
+"""
+
+from .base import DEFAULT_QUANTILES, BaseForecaster
+from .gbm import HGBFeatures
 from .linear import RidgeFeatures
+from .stats import SktimeAutoETS, SktimeTheta
+from .xgb import XGBFeatures
 
-__all__ = ["RidgeFeatures"]
+__all__ = [
+    "DEFAULT_QUANTILES",
+    "BaseForecaster",
+    "HGBFeatures",
+    "RidgeFeatures",
+    "SktimeAutoETS",
+    "SktimeTheta",
+    "XGBFeatures",
+]

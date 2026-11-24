@@ -34,7 +34,9 @@ def fold_features(X: pd.DataFrame, manifest: dict, split: Split) -> pd.DataFrame
     load_cols = [c for c in X_test.columns if c not in exo]
     n_nan_load = int(X_test[load_cols].isna().sum().sum())
     if n_nan_load:
-        logger.warning(
+        # routine: the target has a handful of gaps (22 NaN / 129k rows) and the
+        # stitch boundary; the model imputes them — not worth a WARNING per fold
+        logger.debug(
             "fold %s: %d NaN in load features (target gaps) — imputed by the model",
             split.test_start.date(),
             n_nan_load,

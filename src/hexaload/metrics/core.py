@@ -81,3 +81,52 @@ def crps(y_true: pd.Series, samples: pd.DataFrame) -> float:
     term1 = np.mean(np.abs(s - y[:, None]))
     pairwise = np.abs(s[:, :, None] - s[:, None, :]).sum(axis=(1, 2)).mean()
     return float(term1 - pairwise / (2.0 * m * m))
+
+
+def quantile_frame(
+    pred: pd.Series, resid: np.ndarray, quantiles: tuple[float, ...]
+) -> pd.DataFrame:
+    """Split-conformal quantile frame around a point forecast.
+
+    ``resid`` are calibration residuals ``y - pred`` computed on the TRAIN
+    fold only (anti-leakage). Returns a DataFrame indexed like ``pred`` with
+    one column per level (``q0.05``, ``q0.1``, ...): ``pred + quantile(resid)``.
+    """
+    r = np.asarray(resid, dtype=float)
+    if r.size == 0:
+        raise ValueError("no calibration residuals")
+    levels = np.quantile(r, list(quantiles), method="linear")
+    return pd.DataFrame(
+        {
+            f"q{a:g}": pred.to_numpy() + v
+            for a, v in zip(quantiles, levels, strict=True)
+        },
+        index=pred.index,
+    )
+
+
+def sample_quantiles(
+    qdf: pd.DataFrame,
+    quantiles: tuple[float, ...],
+    n_samples: int,
+    seed: int = 0,
+) -> pd.DataFrame:
+    """Sample from a quantile forecast by inverse-CDF interpolation.
+
+    ``qdf``: rows = time, columns = quantile levels in ``quantiles`` order
+    (names ``q<level>``). Returns a DataFrame rows = time, columns = samples
+    (uniform draws interpolated between the quantile levels, clamped at the
+    edges) — the input of :func:`crps`.
+    """
+    alphas = np.asarray(list(quantiles), dtype=float)
+    Q = qdf.to_numpy(dtype=float)
+    if Q.shape[1] != alphas.size:
+        raise ValueError(
+            f"qdf has {Q.shape[1]} columns but {alphas.size} quantile levels given"
+        )
+    rng = np.random.default_rng(seed)
+    U = rng.random((Q.shape[0], n_samples))
+    out = np.empty_like(U)
+    for i in range(Q.shape[0]):
+        out[i] = np.interp(U[i], alphas, Q[i])
+    return pd.DataFrame(out, index=qdf.index)

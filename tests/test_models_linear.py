@@ -17,37 +17,67 @@ def make_xy(n: int = 24 * 60) -> tuple[pd.DataFrame, pd.Series]:
     return X, y
 
 
+def split(X: pd.DataFrame, y: pd.Series, cut: str = "2025-02-01"):
+    tr = np.asarray(X.index <= pd.Timestamp(cut, tz="UTC"), dtype=bool)
+    train_idx = pd.DatetimeIndex(X.index[tr])
+    test_idx = pd.DatetimeIndex(X.index[~tr])
+    return y.loc[train_idx], X.loc[train_idx], test_idx, X.loc[test_idx]
+
+
 def test_fit_predict_roundtrip() -> None:
     X, y = make_xy()
-    m = RidgeFeatures().fit(X.loc[:"2025-02-01"], y.loc[:"2025-02-01"])
-    pred = m.predict(X.loc["2025-02-01":])
+    y_tr, X_tr, test_idx, X_te = split(X, y)
+    m = RidgeFeatures().fit(y_tr, X_tr)
+    pred = m.predict(test_idx, X_te)
     assert isinstance(pred, pd.Series)
-    assert pred.index.equals(X.loc["2025-02-01":].index)
+    assert pred.index.equals(test_idx)
     assert pred.notna().all()
     # the model recovers the linear relation: MAE small relative to signal
-    mae = float((pred - y.loc["2025-02-01":]).abs().mean())
+    mae = float((pred - y.loc[test_idx]).abs().mean())
     assert mae < 5.0
 
 
 def test_deterministic_and_clipped() -> None:
     X, y = make_xy()
-    m1 = RidgeFeatures().fit(X, y)
-    m2 = RidgeFeatures().fit(X, y)
-    pd.testing.assert_series_equal(m1.predict(X), m2.predict(X))
+    m1 = RidgeFeatures().fit(y, X)
+    m2 = RidgeFeatures().fit(y, X)
+    pd.testing.assert_series_equal(m1.predict(X.index, X), m2.predict(X.index, X))
     Xneg = X.copy()
     Xneg["f1"] = -1e9  # force negative raw prediction
-    assert (RidgeFeatures().fit(X, y).predict(Xneg) >= 0).all()
+    assert (RidgeFeatures().fit(y, X).predict(X.index, Xneg) >= 0).all()
 
 
 def test_nan_rows_and_missing_columns() -> None:
     X, y = make_xy()
     y2 = y.copy()
     y2.iloc[:100] = np.nan
-    m = RidgeFeatures().fit(X, y2)  # imputer handles X NaN; y NaN rows dropped
+    m = RidgeFeatures().fit(y2, X)  # imputer handles X NaN; y NaN rows dropped
     Xnan = X.copy()
     Xnan.iloc[0, 0] = np.nan
-    assert m.predict(Xnan).notna().all()  # imputed
+    assert m.predict(X.index, Xnan).notna().all()  # imputed
     with pytest.raises(RuntimeError, match="fit"):
-        RidgeFeatures().predict(X)
+        RidgeFeatures().predict(X.index, X)
+    with pytest.raises(ValueError, match="X_train"):
+        RidgeFeatures().fit(y)
+    with pytest.raises(ValueError, match="X_future"):
+        m.predict(X.index)
     with pytest.raises(ValueError, match="missing feature columns"):
-        m.predict(X.drop(columns=["f1"]))
+        m.predict(X.index, X.drop(columns=["f1"]))
+
+
+def test_predict_quantiles_conformal() -> None:
+    X, y = make_xy()
+    y_tr, X_tr, test_idx, X_te = split(X, y)
+    m = RidgeFeatures().fit(y_tr, X_tr)
+    q = m.predict_quantiles(test_idx, X_te, (0.05, 0.5, 0.95))
+    assert q.index.equals(pd.DatetimeIndex(test_idx))
+    assert list(q.columns) == ["q0.05", "q0.5", "q0.95"]
+    assert (q["q0.05"] <= q["q0.5"]).all()
+    assert (q["q0.5"] <= q["q0.95"]).all()
+    pred = m.predict(test_idx, X_te)
+    # median quantile tracks the point forecast on this near-linear synthetic
+    assert (q["q0.5"] - pred).abs().max() < 5.0
+    # coverage: residuals are tiny -> almost all test y inside [q0.05, q0.95]
+    y_te = y.loc[test_idx]
+    inside = ((y_te >= q["q0.05"]) & (y_te <= q["q0.95"])).mean()
+    assert inside >= 0.8  # 90% nominal interval, small synthetic sample

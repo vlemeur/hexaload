@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-METRIC_COLUMNS = ["mae", "rmse", "mase"]
+METRIC_COLUMNS = ["mae", "rmse", "mase", "crps"]
 
 
 def summarize(
