@@ -44,6 +44,7 @@ from hexaload.metrics import DEFAULT_SP, crps, mae, mase, rmse, sample_quantiles
 from hexaload.models import (
     DEFAULT_QUANTILES,
     NHITS,
+    ChronosBoltTSFM,
     HGBFeatures,
     MLPFeatures,
     PatchTSTFeatures,
@@ -52,6 +53,7 @@ from hexaload.models import (
     SktimeAutoETS,
     SktimeTheta,
     TCNFeatures,
+    TimestralTSFM,
     XGBFeatures,
 )
 from hexaload.results.table import summarize, write_table
@@ -169,8 +171,12 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             preds[name] = pred
             # split-conformal intervals from train-fold residuals (as-of)
             qpreds[name] = residual_quantiles(pred, resid, DEFAULT_QUANTILES)
-        if X is not None and manifest is not None:
-            X_fold = fold_features(X, manifest, split)
+        X_fold = (
+            fold_features(X, manifest, split)
+            if X is not None and manifest is not None
+            else None
+        )
+        if X_fold is not None:
             for name, model_cls in (
                 ("ridge_features", RidgeFeatures),
                 ("hgb_features", HGBFeatures),
@@ -220,6 +226,35 @@ def run(args: argparse.Namespace) -> pd.DataFrame:
             with suppress(NotImplementedError):
                 qpreds[name] = model.predict_quantiles(
                     split.test, quantiles=DEFAULT_QUANTILES
+                )
+        # zero-shot TSFMs: exogenous columns only as known-future covariates
+        exo_cols = (
+            [c for c, m in manifest.items() if not m.get("reads_target")]
+            if manifest is not None
+            else []
+        )
+        for name, make in (
+            ("timestral_209m", lambda: TimestralTSFM("mistralai/Timestral-209M")),
+            ("chronos_bolt", lambda: ChronosBoltTSFM("amazon/chronos-bolt-base")),
+        ):
+            if name in skip:
+                continue
+            try:
+                X_tr = X_fold.loc[split.train][exo_cols] if X_fold is not None else None
+                X_te = X_fold.loc[split.test][exo_cols] if X_fold is not None else None
+                model = make().fit(y_train, X_tr)
+                preds[name] = model.predict(split.test, X_te)
+            except Exception as exc:
+                logger.warning(
+                    "fold %s: model %s failed (%s) — no score for this fold",
+                    split.test_start.date(),
+                    name,
+                    exc,
+                )
+                continue
+            with suppress(NotImplementedError):
+                qpreds[name] = model.predict_quantiles(
+                    split.test, X_te, DEFAULT_QUANTILES
                 )
         for model, pred in preds.items():
             rec = {
