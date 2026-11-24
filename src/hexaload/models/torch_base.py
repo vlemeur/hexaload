@@ -10,6 +10,9 @@ Apple Silicon, CPU in CI/tests).
 
 from __future__ import annotations
 
+import contextlib
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import torch
@@ -80,6 +83,9 @@ class TorchForecaster(BaseForecaster):
         device: str | None = None,
         seed: int = 0,
         quantiles: tuple[float, ...] = DEFAULT_QUANTILES,
+        on_epoch_end: Any = None,
+        num_workers: int = 0,
+        use_amp: bool = False,
     ) -> None:
         self._h = h
         self._input_size = input_size
@@ -87,10 +93,14 @@ class TorchForecaster(BaseForecaster):
         self._patience = patience
         self._batch_size = batch_size
         self._lr = lr
+        self._num_workers = num_workers
+        self._use_amp = use_amp
         self._val_hours = val_hours
         self._device = resolve_device(device)
         self._seed = seed
         self._quantiles = tuple(quantiles)
+        # optional hook(epoch, val_loss) — used by Optuna ASHA pruning
+        self._on_epoch_end = on_epoch_end
         self._module: nn.Module | None = None
         self._X_tail: np.ndarray | None = None  # last input_size rows of X_eff
         self._cols_fit: list[str] | None = None  # columns of X_eff at fit (incl. __y__)
@@ -153,12 +163,29 @@ class TorchForecaster(BaseForecaster):
         val_ds = _WindowDataset(Xv, yv, self._input_size, self._h, val_t)
         gen = torch.Generator().manual_seed(self._seed)
         train_dl = DataLoader(
-            train_ds, batch_size=self._batch_size, shuffle=True, generator=gen
+            train_ds,
+            batch_size=self._batch_size,
+            shuffle=True,
+            generator=gen,
+            num_workers=self._num_workers,
+            persistent_workers=self._num_workers > 0,
         )
-        val_dl = DataLoader(val_ds, batch_size=self._batch_size, shuffle=False)
+        val_dl = DataLoader(
+            val_ds,
+            batch_size=self._batch_size,
+            shuffle=False,
+            num_workers=self._num_workers,
+            persistent_workers=self._num_workers > 0,
+        )
         qs = torch.tensor(self._quantiles, dtype=torch.float32, device=self._device)
         module = self._new_module(Xv.shape[1]).to(self._device)
         opt = torch.optim.Adam(module.parameters(), lr=self._lr)
+        # mixed precision on Apple Silicon only (bfloat16); CPU stays float32
+        amp_ctx = (
+            torch.autocast("mps", dtype=torch.bfloat16)
+            if self._use_amp and self._device == "mps"
+            else contextlib.nullcontext()
+        )
         best_val, best_state, bad = float("inf"), None, 0
         for _epoch in range(self._max_epochs):
             module.train()
@@ -169,7 +196,8 @@ class TorchForecaster(BaseForecaster):
                     yb.to(self._device),
                 )
                 opt.zero_grad()
-                loss = pinball_loss(module(x_hist, x_fut), yb, qs)
+                with amp_ctx:
+                    loss = pinball_loss(module(x_hist, x_fut), yb, qs)
                 loss.backward()
                 opt.step()
             module.eval()
@@ -192,6 +220,8 @@ class TorchForecaster(BaseForecaster):
                 bad += 1
                 if bad >= self._patience:
                     break
+            if self._on_epoch_end is not None:
+                self._on_epoch_end(_epoch, val_loss)  # may raise (e.g. TrialPruned)
         if best_state is not None:
             module.load_state_dict(best_state)
         module.eval()

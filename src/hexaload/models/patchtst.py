@@ -47,7 +47,11 @@ class _PatchTSTModule(nn.Module):
             batch_first=True,
             norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=n_layers)
+        # enable_nested_tensor=False: norm_first=True would disable it anyway
+        # (silences the UserWarning; no behavior change)
+        self.encoder = nn.TransformerEncoder(
+            layer, num_layers=n_layers, enable_nested_tensor=False
+        )
         self.head = nn.Linear(n_patches * d_model + h * n_features, h * n_quantiles)
 
     def forward(self, x_hist: torch.Tensor, x_fut: torch.Tensor) -> torch.Tensor:

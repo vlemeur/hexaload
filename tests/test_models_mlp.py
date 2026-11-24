@@ -81,6 +81,16 @@ def test_works_without_exog() -> None:
     assert pred.notna().all()
 
 
+def test_num_workers_and_amp_flag_accepted_on_cpu() -> None:
+    # num_workers>0 prefetches batches; use_amp is a no-op on CPU (float32 kept)
+    X, y = make_xy()
+    y_tr, X_tr, test_idx, X_te = split(X, y)
+    model = tiny(max_epochs=2, patience=2, num_workers=2, use_amp=True)
+    model.fit(y_tr, X_tr)
+    pred = model.predict(test_idx, X_te)
+    assert len(pred) == 24
+
+
 def test_contract() -> None:
     X, y = make_xy()
     y_tr, X_tr, test_idx, X_te = split(X, y)
