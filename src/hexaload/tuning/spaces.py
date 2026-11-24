@@ -129,6 +129,9 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "hidden": hidden,
             "dropout": trial.suggest_float("dropout", 0.0, 0.3),
             "lr": trial.suggest_float("lr", 3e-4, 3e-3, log=True),
+            "batch_size": trial.suggest_categorical(
+                "batch_size", [256, 512, 1024, 2048]
+            ),
             "input_size": trial.suggest_categorical(
                 "input_size", [24 * 7, 24 * 14, 24 * 28]
             ),
@@ -140,6 +143,9 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "num_layers": trial.suggest_int("num_layers", 1, 3),
             "dropout": trial.suggest_float("dropout", 0.0, 0.3),
             "lr": trial.suggest_float("lr", 3e-4, 3e-3, log=True),
+            "batch_size": trial.suggest_categorical(
+                "batch_size", [256, 512, 1024, 2048]
+            ),
             "input_size": trial.suggest_categorical(
                 "input_size", [24 * 7, 24 * 14, 24 * 28]
             ),
@@ -151,6 +157,9 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "kernel": trial.suggest_categorical("kernel", [3, 5]),
             "dropout": trial.suggest_float("dropout", 0.0, 0.3),
             "lr": trial.suggest_float("lr", 3e-4, 3e-3, log=True),
+            "batch_size": trial.suggest_categorical(
+                "batch_size", [256, 512, 1024, 2048]
+            ),
             "input_size": trial.suggest_categorical(
                 "input_size", [24 * 7, 24 * 14, 24 * 28]
             ),
@@ -168,6 +177,9 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "hidden": trial.suggest_categorical("hidden", [64, 128, 256]),
             "n_layers": trial.suggest_int("n_layers", 1, 3),
             "lr": trial.suggest_float("lr", 3e-4, 3e-3, log=True),
+            "batch_size": trial.suggest_categorical(
+                "batch_size", [256, 512, 1024, 2048]
+            ),
             "input_size": trial.suggest_categorical(
                 "input_size", [24 * 7, 24 * 14, 24 * 28]
             ),
@@ -180,6 +192,9 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "n_heads": trial.suggest_categorical("n_heads", [2, 4, 8]),
             "n_layers": trial.suggest_int("n_layers", 1, 3),
             "lr": trial.suggest_float("lr", 3e-4, 3e-3, log=True),
+            "batch_size": trial.suggest_categorical(
+                "batch_size", [256, 512, 1024, 2048]
+            ),
             "input_size": trial.suggest_categorical(
                 "input_size", [24 * 7, 24 * 14, 24 * 28]
             ),

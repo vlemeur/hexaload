@@ -71,6 +71,13 @@ class RunLogger:
     def metrics(self, d: dict[str, float]) -> None:
         mlflow.log_metrics({k: float(v) for k, v in d.items()})
 
+    def metric(self, key: str, value: float, step: int = 0) -> None:
+        """One stepped metric point (e.g. val_loss per epoch, mase per fold)."""
+        mlflow.log_metric(key, float(value), step=step)
+
+    def tag(self, key: str, value: str) -> None:
+        mlflow.set_tag(key, value)
+
     def __exit__(self, exc_type, exc, tb) -> None:
         self.metrics(
             {

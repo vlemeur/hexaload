@@ -127,8 +127,13 @@ def score_folds(
     data: TuningData,
     cfg: TuningConfig,
     progress: BaseProgress | None = None,
+    on_fold: Any = None,
 ) -> list[dict]:
-    """One record (mase/crps) per fold for a model instantiated with ``params``."""
+    """One record (mase/crps) per fold for a model instantiated with ``params``.
+
+    ``on_fold(i, record)`` is called after each fold (used to log per-fold
+    metrics to MLflow with step=i).
+    """
     progress = progress or NullProgress()
     records: list[dict] = []
     for split in splits:
@@ -174,25 +179,40 @@ def score_folds(
         else:
             rec["crps"] = None  # point-only model
         records.append(rec)
+        if on_fold is not None:
+            on_fold(len(records) - 1, rec)
     return records
 
 
 def make_epoch_hook(
-    progress: BaseProgress, best_val: dict[str, float], *, warmup: int, max_epochs: int
+    progress: BaseProgress,
+    best_by_trial: dict[int, float],
+    *,
+    trial_number: int,
+    warmup: int,
+    max_epochs: int,
+    n_startup: int = 3,
+    factor: float = 2.0,
 ):
     """Per-epoch hook for torch models during tuning.
 
-    Multi-objective Optuna does NOT support ``trial.report`` — so ASHA-style
-    pruning is done manually here: after ``warmup`` epochs, prune the trial if
-    its val_loss is more than 1.5x the best val_loss seen so far in the study
-    (``best_val`` is a mutable cell shared by all trials of the study).
+    Multi-objective Optuna does NOT support ``trial.report`` — so pruning is
+    done manually here, MedianPruner-style: track each trial's best val_loss in
+    the shared ``best_by_trial`` dict; once at least ``n_startup`` trials have a
+    best value and ``warmup`` epochs are done, prune the current trial if its
+    val_loss exceeds ``factor`` x the MEDIAN of the per-trial bests (the median,
+    not the min — comparing to the absolute best prunes everything).
     """
 
     def on_epoch_end(epoch: int, val_loss: float) -> None:
         progress.context(epoch=f"{epoch}/{max_epochs}", val=f"{val_loss:.4f}")
-        if val_loss < best_val["v"]:
-            best_val["v"] = val_loss
-        if epoch >= warmup and val_loss > 1.5 * best_val["v"]:
+        cur = best_by_trial.get(trial_number, float("inf"))
+        if val_loss < cur:
+            best_by_trial[trial_number] = val_loss
+        if epoch < warmup or len(best_by_trial) < n_startup:
+            return
+        threshold = factor * float(np.median(list(best_by_trial.values())))
+        if val_loss > threshold:
             raise optuna.TrialPruned()
 
     return on_epoch_end
@@ -203,30 +223,72 @@ def _objective(
     cfg: TuningConfig,
     data: TuningData,
     progress: BaseProgress,
-    best_val: dict[str, float],
+    best_by_trial: dict[int, float],
+    run_factory: Any,
 ):
-    """Optuna objective: mean MASE and mean CRPS over the tuning folds."""
+    """Optuna objective: mean MASE and mean CRPS over the tuning folds.
+
+    One MLflow run is opened PER TRIAL (via ``run_factory``) so that per-fold
+    metrics and torch val_loss-per-epoch are logged with steps, like onomatron.
+    """
 
     def objective(trial: optuna.Trial) -> tuple[float, float]:
         progress.context(model=model, trial=f"{trial.number}")
         params = suggest_params(model, trial)
-        if model in TORCH_MODELS:
-            params.update(
-                max_epochs=cfg.max_epochs_torch,
-                device=cfg.device,
-                seed=cfg.seed + trial.number,
-                on_epoch_end=make_epoch_hook(
+        with run_factory(trial) as run:
+            run.params({**params, "model": model, "seed": cfg.seed + trial.number})
+            try:
+                if model in TORCH_MODELS:
+                    params.update(
+                        max_epochs=cfg.max_epochs_torch,
+                        device=cfg.device,
+                        seed=cfg.seed + trial.number,
+                        # GPU-friendly defaults during tuning: prefetch batches
+                        # on CPU workers + bfloat16 autocast on MPS
+                        num_workers=4,
+                        use_amp=True,
+                    )
+
+                    def on_epoch_end(epoch: int, val_loss: float) -> None:
+                        run.metric("val_loss", val_loss, step=epoch)
+                        make_epoch_hook(
+                            progress,
+                            best_by_trial,
+                            trial_number=trial.number,
+                            warmup=cfg.prune_warmup_epochs,
+                            max_epochs=cfg.max_epochs_torch,
+                        )(epoch, val_loss)
+
+                    params["on_epoch_end"] = on_epoch_end
+
+                def on_fold(i: int, rec: dict) -> None:
+                    m = {"mase": rec["mase"]}
+                    if rec.get("crps") is not None:
+                        m["crps"] = rec["crps"]
+                    for k, v in m.items():
+                        run.metric(f"{k}_fold{i}", v, step=i)
+
+                records = score_folds(
+                    model,
+                    params,
+                    data.tune_splits,
+                    data,
+                    cfg,
                     progress,
-                    best_val,
-                    warmup=cfg.prune_warmup_epochs,
-                    max_epochs=cfg.max_epochs_torch,
-                ),
-            )
-        records = score_folds(model, params, data.tune_splits, data, cfg, progress)
-        mase_mean = float(np.mean([r["mase"] for r in records]))
-        crps_vals = [r["crps"] for r in records if r["crps"] is not None]
-        crps_mean = float(np.mean(crps_vals)) if crps_vals else PENALTY
-        return mase_mean, crps_mean
+                    on_fold=on_fold,
+                )
+                mase_mean = float(np.mean([r["mase"] for r in records]))
+                crps_vals = [r["crps"] for r in records if r["crps"] is not None]
+                crps_mean = float(np.mean(crps_vals)) if crps_vals else PENALTY
+                run.metrics({"mase_mean": mase_mean, "crps_mean": crps_mean})
+                run.tag("state", "complete")
+                return mase_mean, crps_mean
+            except optuna.TrialPruned:
+                run.tag("state", "pruned")
+                raise
+            except Exception:
+                run.tag("state", "failed")
+                raise
 
     return objective
 
@@ -266,7 +328,10 @@ def run_study(
         load_if_exists=True,
     )
     n_before = len(study.trials)
-    best_val = {"v": float("inf")}  # shared across trials: best val_loss seen
+    # shared across trials: trial_number -> best val_loss (manual median pruning)
+    best_by_trial: dict[int, float] = {
+        t.number: float("inf") for t in study.trials if t.number is not None
+    }
     t0 = time.perf_counter()
     # "+k/n": trials launched by THIS call (the study itself may be resumed)
     progress.context(model=model, trials=f"+{0}/{cfg.n_trials}")
@@ -296,8 +361,17 @@ def run_study(
             )
             study.stop()
 
+    def run_factory(trial: optuna.trial.FrozenTrial) -> RunLogger:
+        """One MLflow run per trial, opened INSIDE the objective (stepped metrics)."""
+        return RunLogger(
+            cfg,
+            cfg.experiment,
+            f"{model}-trial-{trial.number}",
+            {"model": model, "trial": str(trial.number), "study": study_name},
+        )
+
     study.optimize(
-        _objective(model, cfg, data, progress, best_val),
+        _objective(model, cfg, data, progress, best_by_trial, run_factory),
         n_trials=cfg.n_trials,
         callbacks=[on_trial_done],
         gc_after_trial=True,
@@ -313,15 +387,6 @@ def run_study(
         len(done),
         len(study.best_trials),
     )
-    for t in done:
-        with RunLogger(
-            cfg,
-            cfg.experiment,
-            f"{model}-trial-{t.number}",
-            {"model": model, "trial": str(t.number)},
-        ) as rl:
-            rl.params({f"p.{k}": v for k, v in t.params.items()})
-            rl.metrics({"mase_mean": t.values[0], "crps_mean": t.values[1]})  # type: ignore[index]
     try:
         best = pick_best_params(study)
     except RuntimeError:

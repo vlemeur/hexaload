@@ -88,6 +88,21 @@ def test_init_mlflow_logs_uri_once(tmp_path, caplog):
     assert len(lines) == 1
 
 
+def test_run_logger_stepped_metric_and_tag(tmp_path):
+    cfg = TuningConfig(mlruns=str(tmp_path / "mlruns"), experiment="test-exp")
+    init_mlflow(cfg)
+    with RunLogger(cfg, "test-exp", "r", {}) as rl:
+        rl.metric("val_loss", 0.5, step=3)
+        rl.metric("val_loss", 0.4, step=7)
+        rl.tag("state", "complete")
+        rid = mlflow.active_run().info.run_id
+    client = mlflow.tracking.MlflowClient()
+    hist = client.get_metric_history(rid, "val_loss")
+    assert [(h.step, h.value) for h in hist] == [(3, 0.5), (7, 0.4)]
+    run = client.get_run(rid)
+    assert run.data.tags["state"] == "complete"
+
+
 def test_run_logger_writes_local_file_store(tmp_path):
     cfg = TuningConfig(mlruns=str(tmp_path / "mlruns"), experiment="test-exp")
     uri = init_mlflow(cfg)
@@ -261,18 +276,39 @@ def test_score_folds_univariate_directly(tmp_path):
 
 
 def test_make_epoch_hook_manual_pruning():
-    # multi-objective Optuna has no trial.report -> pruning must be manual
+    # multi-objective Optuna has no trial.report -> pruning must be manual,
+    # median-style: not before n_startup trials, threshold = factor x MEDIAN
     from hexaload.progress import NullProgress
     from hexaload.tuning.tune import make_epoch_hook
 
-    best = {"v": float("inf")}
-    hook = make_epoch_hook(NullProgress(), best, warmup=2, max_epochs=10)
-    hook(0, 1.0)
-    hook(1, 0.8)  # best = 0.8
-    hook(2, 0.9)  # epoch >= warmup but 0.9 < 1.5*0.8 -> kept
-    assert best["v"] == 0.8
+    best_by_trial: dict[int, float] = {}
+    h0 = make_epoch_hook(
+        NullProgress(), best_by_trial, trial_number=0, warmup=2, max_epochs=10
+    )
+    h0(0, 1.0)
+    h0(1, 0.8)
+    h0(5, 100.0)  # only 1 trial known -> never pruned (startup)
+    assert best_by_trial[0] == 0.8
+    h1 = make_epoch_hook(
+        NullProgress(), best_by_trial, trial_number=1, warmup=2, max_epochs=10
+    )
+    h1(0, 0.9)
+    h2 = make_epoch_hook(
+        NullProgress(), best_by_trial, trial_number=2, warmup=2, max_epochs=10
+    )
+    h2(0, 0.85)  # 3 trials now; median of [0.8, 0.9, 0.85] = 0.85
+    # a bad trial is pruned once past warmup: 5.0 > 2.0 * 0.85
+    h3 = make_epoch_hook(
+        NullProgress(), best_by_trial, trial_number=3, warmup=2, max_epochs=10
+    )
+    h3(0, 5.0)
     with pytest.raises(optuna.TrialPruned):
-        hook(3, 2.0)  # 2.0 > 1.5*0.8 -> pruned
+        h3(3, 5.0)
+    # a reasonable trial is kept: 1.0 < 2.0 * median
+    h4 = make_epoch_hook(
+        NullProgress(), best_by_trial, trial_number=4, warmup=2, max_epochs=10
+    )
+    h4(3, 1.0)
 
 
 def test_run_study_survives_failing_trials(tmp_path, monkeypatch):
@@ -290,3 +326,23 @@ def test_run_study_survives_failing_trials(tmp_path, monkeypatch):
     assert len(study.trials) == 2
     assert all(t.state == optuna.trial.TrialState.FAIL for t in study.trials)
     assert best == {}  # defaults fallback
+    # each trial got its own MLflow run, tagged failed
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.experiment], filter_string="tags.state = 'failed'"
+    )
+    assert len(runs) == 2
+
+
+def test_mini_study_logs_per_fold_metrics(tmp_path):
+    cfg = _cfg(tmp_path)
+    data = _synth_data(tmp_path)
+    run_study("sktime_theta", cfg, data)
+    runs = mlflow.search_runs(
+        experiment_names=[cfg.experiment], filter_string="tags.state = 'complete'"
+    )
+    assert len(runs) == 2  # 2 trials, one MLflow run each
+    rid = runs.iloc[0]["run_id"]
+    client = mlflow.tracking.MlflowClient()
+    for key in ("mase_fold0", "mase_fold1", "crps_fold0", "mase_mean", "crps_mean"):
+        hist = client.get_metric_history(rid, key)
+        assert len(hist) == 1, key
