@@ -26,9 +26,10 @@ check:
 tune models="hgb_features,xgb_features" trials="30" budget_minutes="90":
     uv run --locked python scripts/tune.py --mode tune --models "{{models}}" --trials {{trials}} --budget-minutes {{budget_minutes}}
 
-# SMOKE: 1 trial per model, tuning only — validates the whole pipeline (~10-15 min)
-smoke budget_minutes="10":
-    uv run --locked python scripts/tune.py --mode tune --trials 1 --budget-minutes {{budget_minutes}}
+# SMOKE: 1 trial per model, tuning only — validates the whole pipeline.
+# torch epochs capped at 6 so even LSTM/TCN finish in minutes: just smoke
+smoke budget_minutes="10" max_epochs="6":
+    uv run --locked python scripts/tune.py --mode tune --trials 1 --budget-minutes {{budget_minutes}} --max-epochs {{max_epochs}}
 
 # FULL benchmark in ONE command: tune all models -> 2026 hold-out -> backtests
 # (tuned + default). Studies are resumable: re-running adds trials.

@@ -64,6 +64,12 @@ def main() -> int:
     )
     parser.add_argument("--device", default=None, help="cpu|mps|cuda (default: auto)")
     parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=25,
+        help="epoch cap for torch models during tuning (smoke: use ~6-8)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="keep optuna/mlflow/data logs (default: quiet, bar stays readable)",
@@ -78,6 +84,7 @@ def main() -> int:
         tune_folds=args.folds,
         budget_minutes=args.budget_minutes,
         device=args.device,
+        max_epochs_torch=args.max_epochs,
     )
     init_mlflow(cfg)
     data = load_tuning_data(cfg)
