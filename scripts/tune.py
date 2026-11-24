@@ -85,6 +85,7 @@ def main() -> int:
         budget_minutes=args.budget_minutes,
         device=args.device,
         max_epochs_torch=args.max_epochs,
+        tuning_window_length=args.tuning_window,
     )
     init_mlflow(cfg)
     data = load_tuning_data(cfg)

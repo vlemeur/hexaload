@@ -94,7 +94,8 @@ def select_folds(
 def load_tuning_data(cfg: TuningConfig) -> TuningData:
     y, _ref, _wx, _source = load_targets()
     X, manifest = load_features()
-    splits = walk_forward_splits(
+    # full-geometry folds (backtest geometry) -> hold-out stays honest
+    splits_full = walk_forward_splits(
         y,
         start=cfg.start,
         end=cfg.end,
@@ -102,13 +103,26 @@ def load_tuning_data(cfg: TuningConfig) -> TuningData:
         window_length=cfg.window_length,
         step_length=cfg.step_length,
     )
+    # shorter-window folds -> cheaper tuning trials
+    splits_tune = walk_forward_splits(
+        y,
+        start=cfg.start,
+        end=cfg.end,
+        horizon=cfg.horizon,
+        window_length=cfg.tuning_window_length,
+        step_length=cfg.step_length,
+    )
     logger.info(
-        "%d walk-forward folds (window=%dh, step=%dh)",
-        len(splits),
+        "%d full folds (window=%dh) | %d tuning folds (window=%dh, step=%dh)",
+        len(splits_full),
         cfg.window_length,
+        len(splits_tune),
+        cfg.tuning_window_length,
         cfg.step_length,
     )
-    tune, holdout = select_folds(splits, cfg)
+    tune = select_folds(splits_tune, cfg)[0]
+    holdout = select_folds(splits_full, cfg)[1]
+    splits = splits_full
     return TuningData(
         y=y,
         X=X,
