@@ -89,12 +89,6 @@ async function renderFullTables(el) {
         + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
           [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
     }
-    if (d.backtest_norte) {
-      const t = d.backtest_norte.slice().sort((a, b) => a.mase_mean - b.mase_mean);
-      html += "<h3>D-1 backtest, same 36 folds, WITHOUT RTE's forecast as input (feature models only)</h3>"
-        + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
-          [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
-    }
     if (d.tuning && Object.keys(d.tuning).length) {
       const rows = Object.entries(d.tuning).map(([model, s]) => ({ model, ...s }))
         .sort((a, b) => (a.best_mase ?? 9) - (b.best_mase ?? 9));
@@ -139,6 +133,7 @@ async function renderForecast(el) {
   const [date, j] = found;
   const first = j.models ? Object.values(j.models)[0] : null;
   const labels = first ? first.median.map((_, i) => `+${i + 1}h`) : [];
+  const hasRte = j.rte_d1 && j.rte_d1.some(v => v != null);
   const prev = new Date(j.date + "T00:00:00Z");
   prev.setUTCDate(prev.getUTCDate() - 1);
   el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.</p>
@@ -161,7 +156,6 @@ async function renderForecast(el) {
       fill: false, tension: 0.25, pointRadius: 0, borderWidth: 2,
     });
   }
-  const hasRte = j.rte_d1 && j.rte_d1.some(v => v != null);
   if (hasRte) {
     ds.push({ label: "RTE prevision_j1 (D-1)", data: j.rte_d1, borderColor: "#ef5350", borderDash: [6, 4], fill: false, tension: 0.2, pointRadius: 0, borderWidth: 2 });
   }
@@ -188,8 +182,7 @@ async function renderAccuracy(el) {
   const labels = [];
   const actual = [];
   const series = {};  // name -> {median, q05, q95}
-  const maseRows = [], crpsRows = [];
-  const short = { timestral_209m: "timestral", hgb_features: "hgb", ridge_features: "ridge", rte_prevision_j1: "rte" };
+  const short = { timestral_209m: "timestral", hgb_features: "hgb", ridge_features: "ridge", rte_prevision_j1: "RTE D-1" };
   for (const d of days) {
     for (let h = 0; h < 24; h++) labels.push(`${d.date.slice(5)} ${String(h).padStart(2, "0")}h`);
     actual.push(...d.actual);
@@ -200,18 +193,27 @@ async function renderAccuracy(el) {
       if (!Array.isArray(m) && m.q05) { series[name].q05.push(...m.q05); series[name].q95.push(...m.q95); }
     }
     if (d.rte_d1) (series.rte_prevision_j1 = series.rte_prevision_j1 || { median: [] }).median.push(...d.rte_d1);
-    const mrow = { date: d.date }, crow = { date: d.date };
-    for (const [k, v] of Object.entries(d.mase || {})) mrow[short[k] || k] = v;
-    for (const [k, v] of Object.entries(d.crps || {})) crow[short[k] || k] = v;
-    maseRows.push(mrow); crpsRows.push(crow);
   }
-  const modelCols = [["timestral", "Timestral", 3], ["hgb", "HGB", 3], ["ridge", "ridge", 3], ["rte", "RTE D-1", 3]];
-  const crpsCols = [["timestral", "Timestral", 0], ["hgb", "HGB", 0], ["ridge", "ridge", 0]];
+  // score tables: models as rows, days as columns, best cell per day highlighted
+  const modelNames = [];
+  for (const d of days) for (const k of Object.keys(d.mase || {})) if (!modelNames.includes(k)) modelNames.push(k);
+  function scoreTable(metric, dec) {
+    const vals = modelNames.map(n => days.map(d => (d[metric] || {})[n] ?? null));
+    const means = vals.map(v => { const p = v.filter(x => x != null); return p.length ? p.reduce((a, b) => a + b, 0) / p.length : null; });
+    const bestMean = Math.min(...means.filter(v => v != null));
+    const bestDay = days.map((_, i) => Math.min(...vals.map(v => v[i]).filter(x => x != null)));
+    const head = "<tr><th>model</th>" + days.map(d => `<th>${d.date.slice(5)}</th>`).join("") + "<th>7-day mean</th></tr>";
+    const body = modelNames.map((n, r) => {
+      const cells = vals[r].map((v, i) => v == null ? "<td>—</td>"
+        : `<td${v === bestDay[i] ? ' class="hexa-best"' : ""}>${v.toFixed(dec)}</td>`).join("");
+      const mc = means[r];
+      return `<tr><td>${short[n] || n}</td>${cells}<td${mc === bestMean ? ' class="hexa-best"' : ""}><b>${mc == null ? "—" : mc.toFixed(dec)}</b></td></tr>`;
+    }).join("");
+    return `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
   el.innerHTML = `<canvas id="chart-accuracy"></canvas>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-      <div><h4>MASE per day (D-1)</h4>${hexaTable(maseRows, [["date", "day", null], ...modelCols])}</div>
-      <div><h4>CRPS per day, MW (D-1)</h4>${hexaTable(crpsRows, [["date", "day", null], ...crpsCols])}</div>
-    </div>`;
+    <h4>MASE per day (D-1) — lower is better</h4>${scoreTable("mase", 3)}
+    <h4>CRPS per day, MW (D-1) — lower is better</h4>${scoreTable("crps", 0)}`;
   const colors = { timestral_209m: "#b39ddb", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
   const dashes = { timestral_209m: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
   const ds = [{ label: "actual", data: actual, borderColor: "#e6e6e6", borderWidth: 2.5, pointRadius: 0, tension: 0.15 }];

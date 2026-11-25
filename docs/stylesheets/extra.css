@@ -57,3 +57,9 @@
 .holdout-inputs { font-size: 0.68rem; opacity: 0.75; }
 
 .hexa-note { font-size: 0.78rem; color: var(--md-default-fg-color--light); }
+
+/* best score cell in the accuracy tables */
+.md-typeset td.hexa-best {
+  background: color-mix(in srgb, var(--hexa-accent) 28%, transparent);
+  font-weight: 600;
+}
