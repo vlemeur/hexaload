@@ -111,12 +111,23 @@ async function renderFullTables(el) {
 /* ---- Forecast charts (latest published day) ---- */
 async function latestForecast() {
   // index.json lists published target dates (file is named by TARGET day J,
-  // not by publication day) — take the latest
+  // not by publication day). Take the latest; if its rte_d1 is still null
+  // (RTE publishes J's forecast later on J-1), fall back to the most recent
+  // date that HAS RTE, so the comparison curve is shown whenever available.
   try {
     const idx = await hexaFetch("forecasts/index.json");
     if (idx.dates && idx.dates.length) {
-      const d = idx.dates[idx.dates.length - 1];
-      return [d, await hexaFetch(`forecasts/${d}.json`)];
+      const dates = idx.dates.slice().reverse();
+      let fallback = null;
+      for (const d of dates) {
+        try {
+          const j = await hexaFetch(`forecasts/${d}.json`);
+          const hasRte = (j.rte_d1 || []).some(v => v != null);
+          if (hasRte) return [d, j];
+          if (!fallback) fallback = [d, j];
+        } catch (e) { /* next */ }
+      }
+      if (fallback) return fallback;
     }
   } catch (e) { /* fall back to probing */ }
   const today = new Date().toISOString().slice(0, 10);
@@ -143,7 +154,7 @@ async function renderForecast(el) {
   const hasRte = j.rte_d1 && j.rte_d1.some(v => v != null);
   const prev = new Date(j.date + "T00:00:00Z");
   prev.setUTCDate(prev.getUTCDate() - 1);
-  el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.</p>
+  el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.${hasRte ? "" : " (latest published day; RTE's curve appears once published)"}</p>
     ${hasRte ? "" : `<p class="hexa-note">RTE's D-1 forecast for ${j.date} is published later on ${prev.toISOString().slice(0, 10)} — the red curve appears here after the evening backfill. Recent RTE comparisons: see the accuracy section below.</p>`}
     <canvas id="chart-forecast"></canvas>`;
   const palette = { timestral_209m: "#b39ddb", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
