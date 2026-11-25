@@ -54,6 +54,9 @@ jobs:
         run: uv run --locked python scripts/forecast.py
         env:
           HF_HUB_OFFLINE: "0"
+      # Score the published forecasts vs actuals + CUSUM drift -> JSON push
+      - name: Monitoring (daily scores + status)
+        run: uv run --locked python scripts/monitor.py
       - name: Cache HF model weights
         uses: actions/cache@v4
         with:
@@ -63,7 +66,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/data/forecasts/ || true
+          git add docs/data/forecasts/ docs/data/monitoring/ || true
           if git diff --cached --quiet; then
             echo "no new forecast JSON — nothing to push"
           else

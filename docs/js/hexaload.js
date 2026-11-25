@@ -33,7 +33,8 @@ function hexaInputs(name) {
   if (name === "rte_prevision_j1") return "RTE's own D-1 forecast (the reference)";
   if (name === "timestral_209m" || name === "chronos_bolt")
     return "exogenous only: calendar + archived weather forecasts — never RTE's forecast";
-  if (name === "hgb_features" || name === "xgb_features" || name === "ridge_features")
+  if (name === "hgb_features" || name === "xgb_features" || name === "ridge_features"
+      || name.startsWith("hgb_features_") || name === "ens_features")
     return "exogenous + load lags + RTE's D-1 forecast (published input)";
   if (name.startsWith("seasonal_naive") || name === "naive") return "load history only";
   if (name.startsWith("sktime_")) return "load history only";
@@ -104,12 +105,23 @@ async function renderFullTables(el) {
 /* ---- Forecast charts (latest published day) ---- */
 async function latestForecast() {
   // index.json lists published target dates (file is named by TARGET day J,
-  // not by publication day) — take the latest
+  // not by publication day). Take the latest; if its rte_d1 is still null
+  // (RTE publishes J's forecast later on J-1), fall back to the most recent
+  // date that HAS RTE, so the comparison curve is shown whenever available.
   try {
     const idx = await hexaFetch("forecasts/index.json");
     if (idx.dates && idx.dates.length) {
-      const d = idx.dates[idx.dates.length - 1];
-      return [d, await hexaFetch(`forecasts/${d}.json`)];
+      const dates = idx.dates.slice().reverse();
+      let fallback = null;
+      for (const d of dates) {
+        try {
+          const j = await hexaFetch(`forecasts/${d}.json`);
+          const hasRte = (j.rte_d1 || []).some(v => v != null);
+          if (hasRte) return [d, j];
+          if (!fallback) fallback = [d, j];
+        } catch (e) { /* next */ }
+      }
+      if (fallback) return fallback;
     }
   } catch (e) { /* fall back to probing */ }
   const today = new Date().toISOString().slice(0, 10);
@@ -136,11 +148,11 @@ async function renderForecast(el) {
   const hasRte = j.rte_d1 && j.rte_d1.some(v => v != null);
   const prev = new Date(j.date + "T00:00:00Z");
   prev.setUTCDate(prev.getUTCDate() - 1);
-  el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.</p>
+  el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.${hasRte ? "" : " (latest published day; RTE's curve appears once published)"}</p>
     ${hasRte ? "" : `<p class="hexa-note">RTE's D-1 forecast for ${j.date} is published later on ${prev.toISOString().slice(0, 10)} — the red curve appears here after the evening backfill. Recent RTE comparisons: see the accuracy section below.</p>`}
     <canvas id="chart-forecast"></canvas>`;
-  const palette = { timestral_209m: "#b39ddb", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
-  const pretty = { timestral_209m: "Timestral-209M", chronos_bolt: "Chronos-Bolt", hgb_features: "HGB", xgb_features: "XGBoost", ridge_features: "Ridge" };
+  const palette = { timestral_209m: "#b39ddb", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
+  const pretty = { timestral_209m: "Timestral-209M", chronos_bolt: "Chronos-Bolt", hgb_features: "HGB", hgb_features_ewma_mondrian: "HGB + EWMA + Mondrian", xgb_features: "XGBoost", ridge_features: "Ridge" };
   const ds = [];
   for (const [name, m] of Object.entries(j.models || {})) {
     const c = palette[name] || "#90caf9";
@@ -182,7 +194,7 @@ async function renderAccuracy(el) {
   const labels = [];
   const actual = [];
   const series = {};  // name -> {median, q05, q95}
-  const short = { timestral_209m: "timestral", hgb_features: "hgb", ridge_features: "ridge", rte_prevision_j1: "RTE D-1" };
+  const short = { timestral_209m: "timestral", hgb_features: "hgb", hgb_features_ewma_mondrian: "hgb+ewma+mondrian", ridge_features: "ridge", rte_prevision_j1: "RTE D-1" };
   for (const d of days) {
     for (let h = 0; h < 24; h++) labels.push(`${d.date.slice(5)} ${String(h).padStart(2, "0")}h`);
     actual.push(...d.actual);
@@ -214,8 +226,8 @@ async function renderAccuracy(el) {
   el.innerHTML = `<canvas id="chart-accuracy"></canvas>
     <h4>MASE per day (D-1) — lower is better</h4>${scoreTable("mase", 3)}
     <h4>CRPS per day, MW (D-1) — lower is better</h4>${scoreTable("crps", 0)}`;
-  const colors = { timestral_209m: "#b39ddb", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
-  const dashes = { timestral_209m: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
+  const colors = { timestral_209m: "#b39ddb", hgb_features_ewma_mondrian: "#80cbc4", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  const dashes = { timestral_209m: [6, 4], hgb_features_ewma_mondrian: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
   const ds = [{ label: "actual", data: actual, borderColor: "#e6e6e6", borderWidth: 2.5, pointRadius: 0, tension: 0.15 }];
   for (const [name, s] of Object.entries(series)) {
     if (name === "rte_prevision_j1") continue;
@@ -233,5 +245,51 @@ async function renderAccuracy(el) {
     options: { responsive: true, aspectRatio: 2.6, spanGaps: true,
       plugins: { legend: { labels: { boxWidth: 12, filter: (it) => !String(it.text).startsWith("_") } } },
       scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 14, font: { size: 9 } } }, y: { title: { display: true, text: "MW" } } } },
+  });
+}
+
+/* ---- Monitoring page: status badge + CUSUM chart + daily MAE bars ---- */
+async function renderMonitoring(statusEl, cusumEl, maeEl) {
+  let daily, status;
+  try { daily = await hexaFetch("monitoring/daily.json"); } catch (e) {
+    statusEl.innerHTML = "<p><em>Monitoring not generated yet — the daily job (forecast.yml) will feed this page.</em></p>";
+    cusumEl.innerHTML = ""; maeEl.innerHTML = ""; return;
+  }
+  try { status = await hexaFetch("monitoring/status.json"); } catch (e) { status = null; }
+  if (status) {
+    const cls = status.status === "served" ? "hexa-badge-ok" : (status.status === "fallback" ? "hexa-badge-warn" : "hexa-badge-bad");
+    statusEl.innerHTML = `<p>Status: <span class="hexa-badge ${cls}">${status.status}</span>
+      ${status.date ? `· latest forecast: <b>${status.date}</b>` : ""}
+      ${status.degraded_inputs && status.degraded_inputs.length ? "<br><span class='hexa-note'>" + status.degraded_inputs.join("; ") + "</span>" : ""}</p>`;
+  }
+  const days = daily.days || [];
+  if (!days.length) { cusumEl.innerHTML = "<p><em>No scored days yet.</em></p>"; maeEl.innerHTML = ""; return; }
+  const labels = days.map(d => d.date.slice(5));
+  const models = [...new Set(days.flatMap(d => Object.keys(d).filter(k => k.endsWith("__mae")).map(k => k.slice(0, -5))))];
+  const palette = { timestral_209m: "#b39ddb", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  // CUSUM chart
+  const cusumDs = models.filter(m => days.some(d => d[m + "__cusum"] != null)).map(m => ({
+    label: m, data: days.map(d => d[m + "__cusum"] ?? null),
+    borderColor: palette[m] || "#90caf9", borderWidth: 1.8, pointRadius: 0, tension: 0.2,
+  }));
+  cusumDs.push({ label: "+h=5", data: labels.map(() => 5), borderColor: "#ef5350", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 });
+  cusumDs.push({ label: "−h=5", data: labels.map(() => -5), borderColor: "#ef5350", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 });
+  cusumEl.innerHTML = "<canvas id='chart-cusum'></canvas>";
+  hexaChart(document.getElementById("chart-cusum"), {
+    type: "line", data: { labels, datasets: cusumDs },
+    options: { responsive: true, spanGaps: true, plugins: { legend: { labels: { boxWidth: 10, font: { size: 9 } } } },
+      scales: { x: { ticks: { font: { size: 9 } } }, y: { title: { display: true, text: "CUSUM (σ units)" } } } },
+  });
+  // MAE bars
+  const maeDs = models.map(m => ({
+    label: m, data: days.map(d => d[m + "__mae"] ?? null),
+    backgroundColor: (palette[m] || "#90caf9") + "aa", borderWidth: 0,
+  }));
+  if (days.some(d => d.rte_mae != null)) maeDs.push({ label: "RTE D-1", data: days.map(d => d.rte_mae ?? null), backgroundColor: "#ef5350aa", borderWidth: 0 });
+  maeEl.innerHTML = "<canvas id='chart-mae'></canvas>";
+  hexaChart(document.getElementById("chart-mae"), {
+    type: "bar", data: { labels, datasets: maeDs },
+    options: { responsive: true, plugins: { legend: { labels: { boxWidth: 10, font: { size: 9 } } } },
+      scales: { x: { ticks: { font: { size: 9 } } }, y: { title: { display: true, text: "MAE (MW)" } } } },
   });
 }

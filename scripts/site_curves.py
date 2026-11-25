@@ -25,12 +25,16 @@ from hexaload.features.table import build_feature_table
 from hexaload.metrics import DEFAULT_SP, crps, mase, sample_quantiles
 from hexaload.models import DEFAULT_QUANTILES
 from hexaload.tuning.params import load_best_params
-from hexaload.tuning.spaces import build_model
+from hexaload.tuning.spaces import (
+    VARIANT_MODELS,
+    build_model,
+    build_variant,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 N_SAMPLES = 100  # empirical CRPS ensemble size (same as backtest/run.py)
 OUT = ROOT / "docs/data/accuracy.json"
-MODELS = ("timestral_209m", "hgb_features", "ridge_features")
+MODELS = ("timestral_209m", "hgb_features_ewma_mondrian", "ridge_features")
 N_DAYS = 7
 WINDOW_H = 24 * 365
 FREEZE_HOUR_PARIS = 12
@@ -119,7 +123,11 @@ def main() -> int:
         }
         y_test = y.reindex(test)
         for name in MODELS:
-            m = build_model(name, params.get(name, {}))
+            m = (
+                build_variant(name, params)
+                if name in VARIANT_MODELS
+                else build_model(name, params.get(name, {}))
+            )
             if name in ("timestral_209m", "chronos_bolt"):
                 m.fit(y_train, X_train[exo])
                 pred = m.predict(block, X_future[exo]).reindex(test)

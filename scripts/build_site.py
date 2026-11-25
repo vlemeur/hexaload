@@ -77,6 +77,9 @@ def main() -> int:
     tuned = load_parquet(RESULTS / "backtest_tuned.parquet")
     default = load_parquet(RESULTS / "backtest_default.parquet")
     d7 = load_parquet(RESULTS / "backtest_d7.parquet")
+    posthoc = load_parquet(RESULTS / "backtest_posthoc.parquet")
+    if tuned is not None and posthoc is not None:
+        tuned = pd.concat([tuned, posthoc])  # wrapper rows join the main 36-fold table
     holdout = load_parquet(TUNING / "holdout.parquet")
     params_path = TUNING / "best_params.yaml"
     yaml.safe_load(params_path.read_text()) if params_path.exists() else {}

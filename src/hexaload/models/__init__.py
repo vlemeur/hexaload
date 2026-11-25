@@ -5,6 +5,8 @@
 
 from ._device import default_device, resolve_device
 from .base import DEFAULT_QUANTILES, BaseForecaster
+from .conformal import BiasEWMA, MondrianConformal
+from .ensemble import EnsembleFeatures
 from .gbm import GBMBase, HGBFeatures, XGBFeatures
 from .linear import RidgeFeatures
 from .mlp import MLPFeatures
@@ -18,6 +20,9 @@ from .tsfm import ChronosBoltTSFM, TimestralTSFM, TSFMForecaster
 __all__ = [
     "DEFAULT_QUANTILES",
     "BaseForecaster",
+    "BiasEWMA",
+    "EnsembleFeatures",
+    "MondrianConformal",
     "GBMBase",
     "HGBFeatures",
     "MLPFeatures",

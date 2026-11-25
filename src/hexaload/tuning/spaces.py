@@ -11,9 +11,12 @@ from typing import Any
 
 from hexaload.models import (
     NHITS,
+    BiasEWMA,
     ChronosBoltTSFM,
+    EnsembleFeatures,
     HGBFeatures,
     MLPFeatures,
+    MondrianConformal,
     PatchTSTFeatures,
     RidgeFeatures,
     RNNFeatures,
@@ -50,6 +53,32 @@ FEATURE_MODELS = (
 )
 UNIVARIATE_MODELS = ("sktime_autoets", "sktime_theta", "nhits")
 TSFM_MODELS = ("timestral_209m", "chronos_bolt")
+# bonus bricks (v2): extra backtest rows built from the feature models above.
+# They need the feature table; --drop-features applies to them too (norte run).
+VARIANT_MODELS = (
+    "ens_features",  # online convex ensemble hgb + xgb + ridge
+    "hgb_features_ewma",  # EWMA bias correction on hgb
+    "hgb_features_mondrian",  # per-local-hour conformal intervals on hgb
+    "hgb_features_ewma_mondrian",  # both: Mondrian conformal around EWMA-corrected hgb
+)
+
+
+def build_variant(model: str, model_params: dict[str, dict] | None = None) -> Any:
+    """Instantiate a bonus-brick backtest row, reusing tuned member params."""
+    params = model_params or {}
+    if model == "ens_features":
+        members = ("hgb_features", "xgb_features", "ridge_features")
+        return EnsembleFeatures([build_model(m, params.get(m)) for m in members])
+    if model.endswith("_ewma_mondrian"):
+        base = model[: -len("_ewma_mondrian")]
+        return MondrianConformal(BiasEWMA(build_model(base, params.get(base))))
+    for suffix, wrap in (("_ewma", BiasEWMA), ("_mondrian", MondrianConformal)):
+        if model.endswith(suffix):
+            base = model[: -len(suffix)]
+            return wrap(build_model(base, params.get(base)))
+    raise ValueError(f"unknown variant {model!r}")
+
+
 ALL_MODEL_NAMES = FEATURE_MODELS + UNIVARIATE_MODELS + TSFM_MODELS
 TORCH_MODELS = (
     "mlp_features",

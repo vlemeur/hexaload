@@ -25,13 +25,19 @@ from hexaload.features import apply_as_of
 from hexaload.models import DEFAULT_QUANTILES
 from hexaload.progress import setup_logging
 from hexaload.tuning.params import load_best_params
-from hexaload.tuning.spaces import FEATURE_MODELS, TSFM_MODELS, build_model
+from hexaload.tuning.spaces import (
+    FEATURE_MODELS,
+    TSFM_MODELS,
+    VARIANT_MODELS,
+    build_model,
+    build_variant,
+)
 
 PARIS = ZoneInfo("Europe/Paris")
 OUT_DIR = Path("docs/data/forecasts")
 WINDOW_H = 24 * 365
 FREEZE_HOUR = 12  # Paris time, day before the target
-DEFAULT_MODELS = ("timestral_209m", "hgb_features")
+DEFAULT_MODELS = ("timestral_209m", "hgb_features_ewma_mondrian")
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +219,11 @@ def main() -> int:
         "rte_d1": [None if pd.isna(v) else float(v) for v in ref.reindex(test_d1)],
     }
     for name in [m.strip() for m in args.models.split(",") if m.strip()]:
-        m = build_model(name, params.get(name, {}))
+        m = (
+            build_variant(name, params)
+            if name in VARIANT_MODELS
+            else build_model(name, params.get(name, {}))
+        )
         if name in TSFM_MODELS:
             m.fit(y_train, X_train[exo] if X_train is not None else None)
             pred = m.predict(block, X_future.loc[block][exo]).reindex(test_d1)
@@ -221,7 +231,7 @@ def main() -> int:
                 block, X_future.loc[block][exo], DEFAULT_QUANTILES
             ).reindex(test_d1)
             pred_d7 = m.predict(block, X_future.loc[block][exo]).reindex(test_d7)
-        elif name in FEATURE_MODELS:
+        elif name in FEATURE_MODELS or name in VARIANT_MODELS:
             if X_train is None:
                 raise ValueError(f"{name} needs the feature table")
             m.fit(y_train, X_train)
