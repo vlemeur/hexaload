@@ -6,9 +6,9 @@ forecast**, walk-forward only: 36 folds over 2023→2026, sliding 365-day train
 window, no random split, anti-leakage by construction.
 
 <div class="stat-cards">
-  <div class="stat"><div class="stat-num">−54%</div><div class="stat-label">MASE vs RTE's D-1 over 36 folds (Timestral 0.237 vs RTE 0.516)</div></div>
-  <div class="stat"><div class="stat-num">0.156</div><div class="stat-label">MASE on the 2026 hold-out — 11 folds, scored once, tuned params</div></div>
-  <div class="stat"><div class="stat-num">289 MW</div><div class="stat-label">CRPS on the 2026 hold-out (Timestral), 90% intervals included</div></div>
+  <div class="stat"><div class="stat-num">−54%</div><div class="stat-label">MASE vs RTE's D-1 over 36 folds (Timestral 0.239 vs RTE 0.516)</div></div>
+  <div class="stat"><div class="stat-num">0.161</div><div class="stat-label">MASE on the 2026 hold-out — 11 folds, scored once, tuned params</div></div>
+  <div class="stat"><div class="stat-num">295 MW</div><div class="stat-label">CRPS on the 2026 hold-out (Timestral), 90% intervals included</div></div>
 </div>
 
 ## Results on 2026 (hold-out)

@@ -25,8 +25,8 @@ from hexaload.progress import Progress, setup_logging
 from hexaload.results.table import summarize, write_table
 from hexaload.tuning.config import TuningConfig
 from hexaload.tuning.evaluate import run_holdout
-from hexaload.tuning.params import load_best_params, save_best_params
-from hexaload.tuning.spaces import TUNABLE, default_params
+from hexaload.tuning.params import save_best_params
+from hexaload.tuning.spaces import TORCH_MODELS, TUNABLE, default_params
 from hexaload.tuning.tracking import init_mlflow
 from hexaload.tuning.tune import load_tuning_data, run_study
 
@@ -37,8 +37,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--models",
-        default=",".join(TUNABLE),
-        help="comma-separated backtest model names (default: all tunable)",
+        default=None,
+        help="comma-separated backtest model names (default: all tunable; "
+        "in eval mode: the tuned non-torch models from best_params.yaml)",
     )
     parser.add_argument(
         "--trials", type=int, default=30, help="Optuna trials per model"
@@ -70,6 +71,12 @@ def main() -> int:
     )
     parser.add_argument("--device", default=None, help="cpu|mps|cuda (default: auto)")
     parser.add_argument(
+        "--no-wrap",
+        dest="wrap",
+        action="store_false",
+        help="do NOT wrap feature models with EWMA+Mondrian in the tuning objective",
+    )
+    parser.add_argument(
         "--max-epochs",
         type=int,
         default=25,
@@ -84,8 +91,19 @@ def main() -> int:
 
     setup_logging(verbose=args.verbose)
 
+    models = [
+        m.strip() for m in (args.models or ",".join(TUNABLE)).split(",") if m.strip()
+    ]
+    if args.mode == "eval" and args.models is None:
+        # hold-out eval: only the tuned non-torch models (deep from-scratch is
+        # documented out-of-scope and fails on the hold-out geometry anyway)
+        from hexaload.tuning.params import load_best_params
+
+        tuned = load_best_params(TuningConfig().out_params)
+        models = [m for m in tuned if m not in TORCH_MODELS] or models
     cfg = TuningConfig(
-        models=[m.strip() for m in args.models.split(",") if m.strip()],
+        wrap=args.wrap,
+        models=models,
         n_trials=args.trials,
         tune_folds=args.folds,
         budget_minutes=args.budget_minutes,

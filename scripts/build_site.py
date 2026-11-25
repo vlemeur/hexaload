@@ -79,7 +79,15 @@ def main() -> int:
     d7 = load_parquet(RESULTS / "backtest_d7.parquet")
     posthoc = load_parquet(RESULTS / "backtest_posthoc.parquet")
     if tuned is not None and posthoc is not None:
-        tuned = pd.concat([tuned, posthoc])  # wrapper rows join the main 36-fold table
+        # wrapper rows join the main 36-fold table; the fresh tuned parquet wins
+        tuned = pd.concat([tuned, posthoc]).drop_duplicates(
+            subset=["model"], keep="first"
+        )
+    # slow TSFM rows are kept in a side parquet (recomputed only on full benches)
+    tsfm = load_parquet(RESULTS / "backtest_tsfm.parquet")
+    if tuned is not None and tsfm is not None:
+        have = set(tuned["model"])
+        tuned = pd.concat([tuned, tsfm[~tsfm["model"].isin(have)]])
     holdout = load_parquet(TUNING / "holdout.parquet")
     params_path = TUNING / "best_params.yaml"
     yaml.safe_load(params_path.read_text()) if params_path.exists() else {}

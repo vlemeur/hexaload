@@ -17,6 +17,11 @@ def save_best_params(all_params: dict[str, dict[str, Any]], path: str | Path) ->
     """Write the generated best-params YAML (never hand-edited)."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        # keep the previous best params — never lose a tuning generation
+        prev = out.with_name(out.stem + ".prev" + out.suffix)
+        prev.write_text(out.read_text())
+        logger.info("backed up previous params to %s", prev)
     out.write_text(yaml.safe_dump(all_params, sort_keys=True, allow_unicode=True))
     logger.info("wrote %s (%d models)", out, len(all_params))
 
