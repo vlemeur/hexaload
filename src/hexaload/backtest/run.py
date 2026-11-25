@@ -117,10 +117,13 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
         y_test = y.loc[split.test]
         preds: dict[str, pd.Series] = {}
         qpreds: dict[str, pd.DataFrame] = {}
+        # D-1-only references (RTE prevision_j1, seasonal-naive sp=24) are only
+        # defined on the first 24 h of a longer (e.g. D+7) test block
+        d1_test = split.test[: min(24, len(split.test))]
         baseline_specs = {
             "naive": (predict_naive(y_train, split.test), naive_residuals(y_train)),
             "seasonal_naive_24": (
-                predict_seasonal_naive(y, split.train, split.test, sp=24),
+                predict_seasonal_naive(y, split.train, d1_test, sp=24),
                 seasonal_residuals(y_train, sp=24),
             ),
             "seasonal_naive_168": (
@@ -128,7 +131,7 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
                 seasonal_residuals(y_train, sp=168),
             ),
             "rte_prevision_j1": (
-                predict_rte_prevision_j1(ref, split.test),
+                predict_rte_prevision_j1(ref, d1_test),
                 (y_train - ref.reindex(y_train.index)).dropna(),
             ),
         }
@@ -210,9 +213,12 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
                     split.test, X_te, DEFAULT_QUANTILES
                 )
         for model, pred in preds.items():
-            # RTE publishes only a D-1 (24 h) forecast: with a longer horizon
-            # (D+7), score the reference on the first 24 h of the test block
-            if model == "rte_prevision_j1" and len(split.test) > 24:
+            # D-1-only references (RTE prevision_j1, seasonal-naive sp=24):
+            # with a longer horizon (D+7), score them on the first 24 h only
+            if (
+                model in ("rte_prevision_j1", "seasonal_naive_24")
+                and len(split.test) > 24
+            ):
                 test_eval = split.test[:24]
             else:
                 test_eval = split.test
