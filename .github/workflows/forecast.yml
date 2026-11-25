@@ -31,8 +31,12 @@ jobs:
           enable-cache: true
       - name: Sync locked environment
         run: uv sync --locked
-      - name: Guard — only run at 11:50 Paris time
+      - name: Guard — only run at 11:50 / 17:50 Paris time (manual runs always pass)
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "manual run (workflow_dispatch) — time guard skipped"
+            exit 0
+          fi
           H=$(date -d "TZ=\"Europe/Paris\" now" +%H%M 2>/dev/null || TZ=Europe/Paris date +%H%M)
           echo "Paris time: $H"
           if ! { [ "$H" -ge 1145 ] && [ "$H" -le 1200 ]; } && ! { [ "$H" -ge 1745 ] && [ "$H" -le 1800 ]; }; then
