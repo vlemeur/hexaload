@@ -186,7 +186,12 @@ class TimestralTSFM(TSFMForecaster):
         device = self._device
         if device == "mps":
             device = "cpu"  # Timestral normalizes in float64; MPS has no float64
+        key = (self._backend, self._repo_id, device)
+        if key in _PIPE_CACHE:  # load the weights once per process, not per fold
+            self._pipe = _PIPE_CACHE[key]
+            return
         self._pipe = TimestralForecaster.from_pretrained(self._repo_id, device=device)
+        _PIPE_CACHE[key] = self._pipe
 
     def fit(
         self, y_train: pd.Series, X_train: pd.DataFrame | None = None
