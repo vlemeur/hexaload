@@ -59,7 +59,7 @@ Timestral (209 M) wins, from-scratch nets don't. Compute budget: M4, 60 min/mode
 - Weather: Open-Meteo `icon_eu` historical-forecast archive (2020-01 → 2026-11),
   never observations.
 - `date`+`heure` = Europe/Paris local, `date_heure` = UTC; everything stored in UTC.
-- Fetch once with the VPN off (the ODRE WAF resets TLS from some exit IPs). The
+- Fetch once. The
   backtest and tuning then run fully offline from the on-disk cache; only the daily
   forecast job touches the network (RTE + live weather API), with the cache as
   fallback. `data/` and `results/` are gitignored; generated tables are never
