@@ -63,3 +63,9 @@
   background: color-mix(in srgb, var(--hexa-accent) 28%, transparent);
   font-weight: 600;
 }
+
+/* monitoring badges */
+.hexa-badge { display: inline-block; padding: 0.1rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.hexa-badge-ok { background: rgba(102, 187, 106, 0.15); color: #66bb6a; border: 1px solid rgba(102, 187, 106, 0.4); }
+.hexa-badge-warn { background: rgba(255, 167, 38, 0.15); color: #ffa726; border: 1px solid rgba(255, 167, 38, 0.4); }
+.hexa-badge-bad { background: rgba(239, 83, 80, 0.15); color: #ef5350; border: 1px solid rgba(239, 83, 80, 0.4); }

@@ -34,6 +34,7 @@ theme:
 nav:
   - Home: index.md
   - Methodology: method.md
+  - Monitoring: monitoring.md
 
 markdown_extensions:
   - tables

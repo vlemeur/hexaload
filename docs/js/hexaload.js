@@ -242,3 +242,49 @@ async function renderAccuracy(el) {
       scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 14, font: { size: 9 } } }, y: { title: { display: true, text: "MW" } } } },
   });
 }
+
+/* ---- Monitoring page: status badge + CUSUM chart + daily MAE bars ---- */
+async function renderMonitoring(statusEl, cusumEl, maeEl) {
+  let daily, status;
+  try { daily = await hexaFetch("monitoring/daily.json"); } catch (e) {
+    statusEl.innerHTML = "<p><em>Monitoring not generated yet — the daily job (forecast.yml) will feed this page.</em></p>";
+    cusumEl.innerHTML = ""; maeEl.innerHTML = ""; return;
+  }
+  try { status = await hexaFetch("monitoring/status.json"); } catch (e) { status = null; }
+  if (status) {
+    const cls = status.status === "served" ? "hexa-badge-ok" : (status.status === "fallback" ? "hexa-badge-warn" : "hexa-badge-bad");
+    statusEl.innerHTML = `<p>Status: <span class="hexa-badge ${cls}">${status.status}</span>
+      ${status.date ? `· latest forecast: <b>${status.date}</b>` : ""}
+      ${status.degraded_inputs && status.degraded_inputs.length ? "<br><span class='hexa-note'>" + status.degraded_inputs.join("; ") + "</span>" : ""}</p>`;
+  }
+  const days = daily.days || [];
+  if (!days.length) { cusumEl.innerHTML = "<p><em>No scored days yet.</em></p>"; maeEl.innerHTML = ""; return; }
+  const labels = days.map(d => d.date.slice(5));
+  const models = [...new Set(days.flatMap(d => Object.keys(d).filter(k => k.endsWith("__mae")).map(k => k.slice(0, -5))))];
+  const palette = { timestral_209m: "#b39ddb", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  // CUSUM chart
+  const cusumDs = models.filter(m => days.some(d => d[m + "__cusum"] != null)).map(m => ({
+    label: m, data: days.map(d => d[m + "__cusum"] ?? null),
+    borderColor: palette[m] || "#90caf9", borderWidth: 1.8, pointRadius: 0, tension: 0.2,
+  }));
+  cusumDs.push({ label: "+h=5", data: labels.map(() => 5), borderColor: "#ef5350", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 });
+  cusumDs.push({ label: "−h=5", data: labels.map(() => -5), borderColor: "#ef5350", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 });
+  cusumEl.innerHTML = "<canvas id='chart-cusum'></canvas>";
+  hexaChart(document.getElementById("chart-cusum"), {
+    type: "line", data: { labels, datasets: cusumDs },
+    options: { responsive: true, spanGaps: true, plugins: { legend: { labels: { boxWidth: 10, font: { size: 9 } } } },
+      scales: { x: { ticks: { font: { size: 9 } } }, y: { title: { display: true, text: "CUSUM (σ units)" } } } },
+  });
+  // MAE bars
+  const maeDs = models.map(m => ({
+    label: m, data: days.map(d => d[m + "__mae"] ?? null),
+    backgroundColor: (palette[m] || "#90caf9") + "aa", borderWidth: 0,
+  }));
+  if (days.some(d => d.rte_mae != null)) maeDs.push({ label: "RTE D-1", data: days.map(d => d.rte_mae ?? null), backgroundColor: "#ef5350aa", borderWidth: 0 });
+  maeEl.innerHTML = "<canvas id='chart-mae'></canvas>";
+  hexaChart(document.getElementById("chart-mae"), {
+    type: "bar", data: { labels, datasets: maeDs },
+    options: { responsive: true, plugins: { legend: { labels: { boxWidth: 10, font: { size: 9 } } } },
+      scales: { x: { ticks: { font: { size: 9 } } }, y: { title: { display: true, text: "MAE (MW)" } } } },
+  });
+}
