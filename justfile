@@ -51,3 +51,27 @@ tune-ui:
 all:
     just test
     just check
+
+# Build the static site: regenerate result pages from results/, then zensical
+site:
+    uv run --locked python scripts/build_site.py
+    uv run --locked zensical build
+
+# Local preview with live reload
+site-serve:
+    uv run --locked python scripts/build_site.py
+    uv run --locked zensical serve
+
+# Regenerate the 7-day accuracy curves (docs/data/accuracy.json), one 2026 fold
+site-curves:
+    uv run --locked python scripts/site_curves.py
+
+# Daily D-1 forecast for tomorrow (freeze J-1 12:00 Paris) -> docs/data/forecasts/<J>.json
+forecast date="" force="":
+    uv run --locked python scripts/forecast.py {{if force == "force" { "--force" } else { "" } }} {{if date != "" { "--date " + date } else { "" } }}
+
+# Refresh the on-disk cache up to today (incremental: monthly cache hits, only
+# missing months are fetched; VPN OFF for ODRE), then rebuild processed data.
+update:
+    uv run --locked python scripts/fetch_data.py --source all
+    uv run --locked python scripts/build_features.py

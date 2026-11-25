@@ -26,11 +26,9 @@ def test_build_full_table_shape_and_manifest(
     assert set(CAL_COLUMNS) | set(CYC_COLUMNS) <= set(X.columns)
     assert any(c.startswith("wx_") for c in X.columns)
     assert any(c.startswith("lag_") for c in X.columns)
-    assert all(
-        m["delay_h"] == 0 and not m["reads_target"]
-        for m in manifest.values()
-        if m["block"] != "lags"
-    )
+    # non-lags blocks never read the target; their delays may be > 0 (archived
+    # forecast lags read the run issued at t-k) and are masked by apply_as_of
+    assert all(not m["reads_target"] for m in manifest.values() if m["block"] != "lags")
     assert all(
         m["delay_h"] >= 24 and m["reads_target"]
         for m in manifest.values()

@@ -1,0 +1,54 @@
+site_name: hexaload
+site_description: A benchmark of national French electricity load forecasting (RTE eco2mix) — walk-forward only, RTE's own D-1 forecast as the reference.
+site_url: https://vlemeur.github.io/hexaload/
+repo_url: https://github.com/vlemeur/hexaload
+repo_name: vlemeur/hexaload
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.integrate
+  palette:
+    # dark by default, like the reference dashboard
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+
+nav:
+  - Home: index.md
+  - Methodology: method.md
+
+markdown_extensions:
+  - tables
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - javascripts/mathjax-config.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - javascripts/mathjax-typeset.js
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins: []

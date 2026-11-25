@@ -3,7 +3,7 @@
 [![CI](https://github.com/vlemeur/hexaload/actions/workflows/ci.yml/badge.svg)](https://github.com/vlemeur/hexaload/actions/workflows/ci.yml)
 
 Benchmark of national French electricity load forecasting on RTE's open data
-(eco2mix national, hourly, UTC). Walk-forward only — no random split, ever.
+(eco2mix national, hourly, UTC). Walk-forward — no random split, ever.
 RTE's own D-1 forecast is the absolute reference.
 
 ## Headline — 36 walk-forward folds, 2023→2026, D-1 (h=24)
@@ -23,8 +23,8 @@ Hold-out 2026 (11 folds, scored once, tuned params): timestral **0.156**,
 hgb 0.291, xgb 0.294, ridge 0.331, chronos 0.336 (CRPS 289–626).
 
 Deep models trained from scratch (MLP, LSTM/GRU, TCN, PatchTST, N-HiTS) were
-tuned seriously (Optuna NSGA-II, 30 trials each) and **do not beat the GBMs**
-on this task (best MASE 0.32 for N-HiTS, up to 2.79 for MLP) — honest write-up
+tuned (Optuna NSGA-II, 30 trials each) and **do not beat the GBMs**
+on this task (best MASE 0.32 for N-HiTS, up to 2.79 for MLP) — write-up
 with the Pareto fronts on the site `/method/` page. Full 36-fold backtest with
 torch models is a documented follow-up.
 
@@ -69,7 +69,7 @@ offline. `results/` is generated too — never hand-edit the tables.
 
 ```
 src/hexaload/
-  data/       network-only fetching + strict validation (pydantic)
+  data/       network-only fetching + validation (pydantic)
   features/   leakage-safe feature blocks + manifest (55 cols) + as-of masking
   backtest/   walk-forward engine, fold masking, baselines (RTE included)
   models/     ridge/HGB/XGB · AutoETS/Theta · MLP/RNN/TCN/N-HiTS/PatchTST · Timestral/Chronos

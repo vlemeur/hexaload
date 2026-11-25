@@ -1,4 +1,8 @@
-"""Weather features (block "weather") — all delays 0: archived forecasts, as-of.
+"""Weather features (block "weather") — archived forecasts, as-of.
+
+Delays are real: a feature at t reading the archived run of t-k has delay k
+(raw vars: 0, pressure gradient: 3, weather lags: 12/24, day aggregates: 24 —
+previous local day). apply_as_of masks them past as_of, so no leakage.
 
 Input: the national hourly weather frame (unit-suffixed columns, from
 ``data.validate.aggregate_weather_national``), or raw grid records aggregated
@@ -171,9 +175,11 @@ def weather_block(wx: pd.DataFrame, *, index: pd.DatetimeIndex) -> FeatureBlock:
     frame["wx_cdd24"] = (t - CDD_BASE_C).clip(lower=0.0)
     frame["wx_dewpoint_c"] = _dew_point_c(t, rh)
 
+    # Day aggregates read the WHOLE local day (up to its end) — using them at t
+    # would leak runs issued after t. Shift to the PREVIOUS day: known at t-24.
     local_day = index.tz_convert(TZ_PARIS).normalize()
-    frame["wx_t_min_day"] = t.groupby(local_day).transform("min")
-    frame["wx_t_max_day"] = t.groupby(local_day).transform("max")
+    frame["wx_t_min_day"] = t.groupby(local_day).transform("min").shift(24)
+    frame["wx_t_max_day"] = t.groupby(local_day).transform("max").shift(24)
     frame["wx_t_amp_day"] = frame["wx_t_max_day"] - frame["wx_t_min_day"]
 
     if "wx_p_hpa" in renamed.columns:
@@ -185,5 +191,16 @@ def weather_block(wx: pd.DataFrame, *, index: pd.DatetimeIndex) -> FeatureBlock:
         frame[f"wx_hdd18_lag{lag}h"] = frame["wx_hdd18"].shift(lag)
         frame[f"wx_cdd24_lag{lag}h"] = frame["wx_cdd24"].shift(lag)
 
-    delays = {c: 0 for c in frame.columns}  # archived forecasts: known at as_of
+    # Delays: each archived-forecast row at valid time τ is the run issued at
+    # τ 00Z, available at τ. A feature at t reading row t-k therefore has
+    # delay k (masked by apply_as_of when t - k > as_of — no leakage).
+    delays = {c: 0 for c in frame.columns}
+    if "wx_dp_3h" in frame.columns:
+        delays["wx_dp_3h"] = 3
+    for lag in WEATHER_LAGS_H:
+        delays[f"wx_t_lag{lag}h"] = lag
+        delays[f"wx_hdd18_lag{lag}h"] = lag
+        delays[f"wx_cdd24_lag{lag}h"] = lag
+    for c in ("wx_t_min_day", "wx_t_max_day", "wx_t_amp_day"):
+        delays[c] = 24  # previous local day, fully known at t-24
     return FeatureBlock("weather", frame, delays)

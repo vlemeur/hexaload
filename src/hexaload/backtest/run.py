@@ -60,6 +60,7 @@ class BacktestConfig:
     expanding: bool = False
     skip: str = ""
     params: str | None = None
+    drop_features: str = ""  # comma-separated columns to remove (e.g. no-RTE variant)
     out: str = "results/backtest.parquet"
 
 
@@ -146,6 +147,9 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
             if X is not None and manifest is not None
             else None
         )
+        drop = {c.strip() for c in cfg.drop_features.split(",") if c.strip()}
+        if X_fold is not None and drop:
+            X_fold = X_fold.drop(columns=[c for c in drop if c in X_fold.columns])
         if X_fold is not None:
             for name in FEATURE_MODELS:
                 if name in skip:
