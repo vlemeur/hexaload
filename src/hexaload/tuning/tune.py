@@ -183,6 +183,11 @@ def _score_one_fold(
         if data.X is not None and data.manifest is not None
         else None
     )
+    if model in TORCH_MODELS:
+        # same epoch cap as during tuning (the objective injects it too): the
+        # hold-out then costs the same per fold as a tuning trial. The full
+        # 36-fold backtest (backtest/run.py) is NOT capped — full budget there.
+        params = {**params, "max_epochs": cfg.max_epochs_torch}
     m = build_model(model, params)
     q = None
     if model in FEATURE_MODELS:
