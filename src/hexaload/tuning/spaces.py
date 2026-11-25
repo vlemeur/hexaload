@@ -65,9 +65,20 @@ def default_params(model: str) -> dict[str, Any]:
     return {}
 
 
+def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Decode tuple params stored as "a-b-c" strings in the best-params YAML
+    (Optuna categoricals must be scalars, so tuples are string-encoded)."""
+    p = dict(params)
+    for key in ("hidden", "pool_rates"):
+        v = p.get(key)
+        if isinstance(v, str):
+            p[key] = tuple(int(x) for x in v.split("-"))
+    return p
+
+
 def build_model(model: str, params: dict[str, Any] | None = None) -> Any:
     """Instantiate a backtest model by name, with (possibly tuned) params."""
-    p = dict(params or {})
+    p = _normalize_params(params or {})
     if model == "ridge_features":
         return RidgeFeatures(**p)
     if model == "hgb_features":

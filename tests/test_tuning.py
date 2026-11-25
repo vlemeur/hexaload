@@ -47,6 +47,21 @@ def test_tunable_covers_all_feature_and_tsfm_models():
         assert m in TUNABLE
 
 
+def test_build_model_decodes_string_encoded_tuples():
+    # best_params.yaml stores tuples as "a-b-c" strings (Optuna categoricals);
+    # build_model must decode them back
+    from hexaload.tuning.spaces import build_model
+
+    m = build_model(
+        "mlp_features", {"hidden": "256-128", "input_size": 168, "max_epochs": 1}
+    )
+    assert m._hidden == (256, 128)
+    n = build_model(
+        "nhits", {"pool_rates": "1-2-4-8", "input_size": 168, "max_epochs": 1}
+    )
+    assert n._pool_rates == (1, 2, 4, 8)
+
+
 def test_build_model_every_name():
     for m in ALL_MODELS:
         model = build_model(m, default_params(m))

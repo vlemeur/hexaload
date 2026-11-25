@@ -152,50 +152,69 @@ def score_folds(
     records: list[dict] = []
     for split in splits:
         progress.context(fold=str(split.test_start.date()))
-        y_train = data.y.loc[split.train]
-        y_test = data.y.loc[split.test]
-        X_fold = (
-            fold_features(data.X, data.manifest, split)
-            if data.X is not None and data.manifest is not None
-            else None
-        )
-        m = build_model(model, params)
-        q = None
-        if model in FEATURE_MODELS:
-            m.fit(y_train, X_fold.loc[split.train])
-            pred = m.predict(split.test, X_fold.loc[split.test])
-            with suppress(NotImplementedError):
-                q = m.predict_quantiles(
-                    split.test, X_fold.loc[split.test], DEFAULT_QUANTILES
-                )
-        elif model in TSFM_MODELS:
-            X_tr = (
-                X_fold.loc[split.train][data.exo_cols] if X_fold is not None else None
+        try:
+            records.append(_score_one_fold(model, params, split, data, cfg))
+        except (
+            Exception
+        ) as exc:  # a fold that fails (e.g. MPS OOM) must not kill the run
+            logger.warning(
+                "fold %s: model %s failed (%s) — skipped",
+                split.test_start.date(),
+                model,
+                exc,
             )
-            X_te = X_fold.loc[split.test][data.exo_cols] if X_fold is not None else None
-            m.fit(y_train, X_tr)
-            pred = m.predict(split.test, X_te)
-            with suppress(NotImplementedError):
-                q = m.predict_quantiles(split.test, X_te, DEFAULT_QUANTILES)
-        else:  # univariate
-            m.fit(y_train)
-            pred = m.predict(split.test)
-            with suppress(NotImplementedError):
-                q = m.predict_quantiles(split.test, quantiles=DEFAULT_QUANTILES)
-        rec = {
-            "fold": str(split.test_start.date()),
-            "model": model,
-            "mase": mase(y_test, pred, y_train=y_train, sp=DEFAULT_SP),
-        }
-        if q is not None:
-            samples = sample_quantiles(q, DEFAULT_QUANTILES, N_SAMPLES, seed=cfg.seed)
-            rec["crps"] = crps(y_test, samples)
-        else:
-            rec["crps"] = None  # point-only model
-        records.append(rec)
+            continue
         if on_fold is not None:
-            on_fold(len(records) - 1, rec)
+            on_fold(len(records) - 1, records[-1])
     return records
+
+
+def _score_one_fold(
+    model: str,
+    params: dict[str, Any],
+    split: Split,
+    data: TuningData,
+    cfg: TuningConfig,
+) -> dict:
+    y_train = data.y.loc[split.train]
+    y_test = data.y.loc[split.test]
+    X_fold = (
+        fold_features(data.X, data.manifest, split)
+        if data.X is not None and data.manifest is not None
+        else None
+    )
+    m = build_model(model, params)
+    q = None
+    if model in FEATURE_MODELS:
+        m.fit(y_train, X_fold.loc[split.train])
+        pred = m.predict(split.test, X_fold.loc[split.test])
+        with suppress(NotImplementedError):
+            q = m.predict_quantiles(
+                split.test, X_fold.loc[split.test], DEFAULT_QUANTILES
+            )
+    elif model in TSFM_MODELS:
+        X_tr = X_fold.loc[split.train][data.exo_cols] if X_fold is not None else None
+        X_te = X_fold.loc[split.test][data.exo_cols] if X_fold is not None else None
+        m.fit(y_train, X_tr)
+        pred = m.predict(split.test, X_te)
+        with suppress(NotImplementedError):
+            q = m.predict_quantiles(split.test, X_te, DEFAULT_QUANTILES)
+    else:  # univariate
+        m.fit(y_train)
+        pred = m.predict(split.test)
+        with suppress(NotImplementedError):
+            q = m.predict_quantiles(split.test, quantiles=DEFAULT_QUANTILES)
+    rec = {
+        "fold": str(split.test_start.date()),
+        "model": model,
+        "mase": mase(y_test, pred, y_train=y_train, sp=DEFAULT_SP),
+    }
+    if q is not None:
+        samples = sample_quantiles(q, DEFAULT_QUANTILES, N_SAMPLES, seed=cfg.seed)
+        rec["crps"] = crps(y_test, samples)
+    else:
+        rec["crps"] = None  # point-only model
+    return rec
 
 
 def make_epoch_hook(
