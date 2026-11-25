@@ -20,7 +20,13 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from hexaload.backtest.load import exogenous_columns, load_features, load_targets
-from hexaload.backtest.recursive import recursive_predict
+from hexaload.backtest.recursive import (
+    FREEZE_HOUR_PARIS,
+    block_for,
+    build_future_features,
+    freeze_as_of,
+    recursive_predict,
+)
 from hexaload.features import apply_as_of
 from hexaload.models import DEFAULT_QUANTILES
 from hexaload.progress import setup_logging
@@ -35,8 +41,9 @@ from hexaload.tuning.spaces import (
 
 PARIS = ZoneInfo("Europe/Paris")
 OUT_DIR = Path("docs/data/forecasts")
+FREEZE_HOUR = FREEZE_HOUR_PARIS  # Paris time, day before the target
 WINDOW_H = 24 * 365
-FREEZE_HOUR = 12  # Paris time, day before the target
+
 DEFAULT_MODELS = ("timestral_209m", "hgb_features_ewma_mondrian")
 
 logger = logging.getLogger(__name__)
@@ -49,23 +56,6 @@ def default_target(now: pd.Timestamp) -> pd.Timestamp:
     return now_paris.normalize() + pd.Timedelta(
         days=1 if now_paris.hour < FREEZE_HOUR else 2
     )
-
-
-def block_for(as_of: pd.Timestamp, test_idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Contiguous model block from as_of+1h through the end of ``test_idx``
-    (freeze at 12:00 Paris, target day starts at 00:00 Paris — the model must
-    predict the contiguous block after the context, then we slice the target
-    day out of it)."""
-    start = as_of + pd.Timedelta(hours=1)
-    n = int((test_idx[-1] - start) / pd.Timedelta(hours=1)) + 1
-    return pd.date_range(start, periods=n, freq="h", tz="UTC")
-
-
-def freeze_as_of(target_utc: pd.Timestamp) -> pd.Timestamp:
-    """Data freeze for the forecast of ``target``: J-1 at 12:00 Paris, in UTC."""
-    j_paris = target_utc.tz_convert(PARIS)
-    freeze = (j_paris - pd.Timedelta(days=1)).normalize().replace(hour=FREEZE_HOUR)
-    return freeze.tz_convert("UTC")
 
 
 def main() -> int:
@@ -175,27 +165,19 @@ def main() -> int:
             wx_all = wx_hist
     else:
         wx_all = wx_hist
-    from hexaload.features.table import build_feature_table
-
-    # build over a padded index so weather lags/gradients have history, then
-    # slice to the forecast range
-    idx_build = pd.date_range(
-        block[0] - pd.Timedelta(hours=72),
-        periods=len(block) + 72,
-        freq="h",
-        tz="UTC",
-    )
-    X_build, manifest_f = build_feature_table(
-        idx_build, as_of=as_of, wx=wx_all, y=y, prevision_j1=ref, horizon=24
-    )
-    X_future = X_build.loc[block]
-    missing = [c for c in X.columns if c not in X_future.columns]
-    if missing:
-        raise SystemExit(
-            f"future feature table misses columns {missing[:5]} — rebuild the "
-            "feature table (`just update`) so train/future schemas match"
+    try:
+        X_future = build_future_features(
+            as_of=as_of,
+            block=block,
+            y=y,
+            wx=wx_all,
+            prevision_j1=ref,
+            columns=X.columns,
         )
-    X_future = X_future[X.columns]
+    except ValueError as exc:
+        raise SystemExit(
+            f"{exc} — rebuild the feature table (`just update`) so schemas match"
+        ) from exc
     n_nan_exo = int(X_future.loc[test_d1, exo].isna().sum().sum())
     if n_nan_exo:
         raise SystemExit(

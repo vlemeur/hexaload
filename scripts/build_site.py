@@ -76,7 +76,6 @@ def main() -> int:
 
     tuned = load_parquet(RESULTS / "backtest_tuned.parquet")
     default = load_parquet(RESULTS / "backtest_default.parquet")
-    d7 = load_parquet(RESULTS / "backtest_d7.parquet")
     posthoc = load_parquet(RESULTS / "backtest_posthoc.parquet")
     if tuned is not None and posthoc is not None:
         # wrapper rows join the main 36-fold table; the fresh tuned parquet wins
@@ -101,7 +100,6 @@ def main() -> int:
         "backtest_default": default.to_dict(orient="records")
         if default is not None
         else None,
-        "backtest_d7": d7.to_dict(orient="records") if d7 is not None else None,
         "holdout": holdout.to_dict(orient="records") if holdout is not None else None,
         "tuning": stats,
     }
@@ -111,7 +109,7 @@ def main() -> int:
         logger.info("no results/ in checkout — keeping committed %s", results_path)
     else:
         results_path.write_text(json.dumps(data_json, indent=1, default=str))
-    for stale in ("results.md", "benchmark.md", "holdout.md", "tuning.md", "d7.md"):
+    for stale in ("results.md", "benchmark.md", "holdout.md", "tuning.md"):
         p = DOCS / stale
         if p.exists():
             p.unlink()

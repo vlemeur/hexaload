@@ -154,14 +154,16 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
         if X_fold is not None and drop:
             X_fold = X_fold.drop(columns=[c for c in drop if c in X_fold.columns])
         if X_fold is not None:
-            for name in FEATURE_MODELS:
+            for name in (*FEATURE_MODELS, *VARIANT_MODELS):
                 if name in skip:
                     continue
                 prog.context(model=name)
                 try:
-                    model = build_model(name, model_params.get(name)).fit(
-                        y_train, X_fold.loc[split.train]
-                    )
+                    model = (
+                        build_variant(name, model_params)
+                        if name in VARIANT_MODELS
+                        else build_model(name, model_params.get(name))
+                    ).fit(y_train, X_fold.loc[split.train])
                     preds[name] = model.predict(split.test, X_fold.loc[split.test])
                 except Exception as exc:
                     logger.warning(
@@ -176,27 +178,6 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
                     qpreds[name] = model.predict_quantiles(
                         split.test, X_fold.loc[split.test], DEFAULT_QUANTILES
                     )
-        for name in VARIANT_MODELS:
-            if name in skip:
-                continue
-            prog.context(model=name)
-            try:
-                model = build_variant(name, model_params).fit(
-                    y_train, X_fold.loc[split.train]
-                )
-                preds[name] = model.predict(split.test, X_fold.loc[split.test])
-            except Exception as exc:
-                logger.warning(
-                    "fold %s: model %s failed (%s) — no score for this fold",
-                    split.test_start.date(),
-                    name,
-                    exc,
-                )
-                continue
-            with suppress(NotImplementedError):
-                qpreds[name] = model.predict_quantiles(
-                    split.test, X_fold.loc[split.test], DEFAULT_QUANTILES
-                )
         for name in UNIVARIATE_MODELS:
             if name in skip:
                 continue

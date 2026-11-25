@@ -18,10 +18,14 @@ from pathlib import Path
 import pandas as pd
 
 from hexaload.backtest.load import exogenous_columns, load_features, load_targets
-from hexaload.backtest.recursive import recursive_predict
+from hexaload.backtest.recursive import (
+    block_for,
+    build_future_features,
+    freeze_as_of,
+    recursive_predict,
+)
 from hexaload.data.fetch import fetch_openmeteo_live_national
 from hexaload.features import apply_as_of
-from hexaload.features.table import build_feature_table
 from hexaload.metrics import DEFAULT_SP, crps, mase, sample_quantiles
 from hexaload.models import DEFAULT_QUANTILES
 from hexaload.tuning.params import load_best_params
@@ -37,30 +41,8 @@ OUT = ROOT / "docs/data/accuracy.json"
 MODELS = ("timestral_209m", "hgb_features_ewma_mondrian", "ridge_features")
 N_DAYS = 7
 WINDOW_H = 24 * 365
-FREEZE_HOUR_PARIS = 12
 
 logger = logging.getLogger(__name__)
-
-
-def block_for(as_of: pd.Timestamp, test_idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Contiguous model block from as_of+1h through the end of ``test_idx``
-    (freeze at 12:00 Paris, target day starts at 00:00 Paris — the model must
-    predict the contiguous block after the context, then we slice the target
-    day out of it)."""
-    start = as_of + pd.Timedelta(hours=1)
-    n = int((test_idx[-1] - start) / pd.Timedelta(hours=1)) + 1
-    return pd.date_range(start, periods=n, freq="h", tz="UTC")
-
-
-def freeze_for(target: pd.Timestamp) -> pd.Timestamp:
-    """Freeze (UTC) for the forecast of target day: J-1 12:00 Paris."""
-    paris = target.tz_convert("Europe/Paris")
-    return (
-        (paris - pd.Timedelta(days=1))
-        .normalize()
-        .replace(hour=FREEZE_HOUR_PARIS)
-        .tz_convert("UTC")
-    )
 
 
 def main() -> int:
@@ -76,7 +58,7 @@ def main() -> int:
     out: dict = {"days": []}
     for target_paris in days:
         target = target_paris.tz_convert("UTC")
-        as_of = freeze_for(target)
+        as_of = freeze_as_of(target)
         if as_of >= y.index.max():
             logger.info("skip %s: not enough actuals yet", target.date())
             continue
@@ -101,17 +83,14 @@ def main() -> int:
                 logger.warning(
                     "live weather failed for %s (%s) — archive only", target.date(), exc
                 )
-        idx_build = pd.date_range(
-            block[0] - pd.Timedelta(hours=72),
-            periods=len(block) + 72,
-            freq="h",
-            tz="UTC",
+        X_future = build_future_features(
+            as_of=as_of,
+            block=block,
+            y=y,
+            wx=wx_all,
+            prevision_j1=ref,
+            columns=X.columns,
         )
-        X_build, _man = build_feature_table(
-            idx_build, as_of=as_of, wx=wx_all, y=y, prevision_j1=ref, horizon=24
-        )
-        X_future = X_build.loc[block]
-        X_future = X_future[X.columns]
 
         day: dict = {
             "date": str(target_paris.date()),
