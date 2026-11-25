@@ -33,7 +33,8 @@ function hexaInputs(name) {
   if (name === "rte_prevision_j1") return "RTE's own D-1 forecast (the reference)";
   if (name === "timestral_209m" || name === "chronos_bolt")
     return "exogenous only: calendar + archived weather forecasts — never RTE's forecast";
-  if (name === "hgb_features" || name === "xgb_features" || name === "ridge_features")
+  if (name === "hgb_features" || name === "xgb_features" || name === "ridge_features"
+      || name.startsWith("hgb_features_") || name === "ens_features")
     return "exogenous + load lags + RTE's D-1 forecast (published input)";
   if (name.startsWith("seasonal_naive") || name === "naive") return "load history only";
   if (name.startsWith("sktime_")) return "load history only";
@@ -89,6 +90,12 @@ async function renderFullTables(el) {
         + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
           [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
     }
+    if (d.backtest_v2) {
+      const t = d.backtest_v2.slice().sort((a, b) => a.mase_mean - b.mase_mean);
+      html += "<h3>Bonus bricks (same 36 folds, tuned member params) — EWMA bias correction + Mondrian per-hour conformal + online ensemble</h3>"
+        + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
+          [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
+    }
     if (d.tuning && Object.keys(d.tuning).length) {
       const rows = Object.entries(d.tuning).map(([model, s]) => ({ model, ...s }))
         .sort((a, b) => (a.best_mase ?? 9) - (b.best_mase ?? 9));
@@ -139,8 +146,8 @@ async function renderForecast(el) {
   el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.</p>
     ${hasRte ? "" : `<p class="hexa-note">RTE's D-1 forecast for ${j.date} is published later on ${prev.toISOString().slice(0, 10)} — the red curve appears here after the evening backfill. Recent RTE comparisons: see the accuracy section below.</p>`}
     <canvas id="chart-forecast"></canvas>`;
-  const palette = { timestral_209m: "#b39ddb", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
-  const pretty = { timestral_209m: "Timestral-209M", chronos_bolt: "Chronos-Bolt", hgb_features: "HGB", xgb_features: "XGBoost", ridge_features: "Ridge" };
+  const palette = { timestral_209m: "#b39ddb", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
+  const pretty = { timestral_209m: "Timestral-209M", chronos_bolt: "Chronos-Bolt", hgb_features: "HGB", hgb_features_ewma_mondrian: "HGB + EWMA + Mondrian", xgb_features: "XGBoost", ridge_features: "Ridge" };
   const ds = [];
   for (const [name, m] of Object.entries(j.models || {})) {
     const c = palette[name] || "#90caf9";
@@ -182,7 +189,7 @@ async function renderAccuracy(el) {
   const labels = [];
   const actual = [];
   const series = {};  // name -> {median, q05, q95}
-  const short = { timestral_209m: "timestral", hgb_features: "hgb", ridge_features: "ridge", rte_prevision_j1: "RTE D-1" };
+  const short = { timestral_209m: "timestral", hgb_features: "hgb", hgb_features_ewma_mondrian: "hgb+ewma+mondrian", ridge_features: "ridge", rte_prevision_j1: "RTE D-1" };
   for (const d of days) {
     for (let h = 0; h < 24; h++) labels.push(`${d.date.slice(5)} ${String(h).padStart(2, "0")}h`);
     actual.push(...d.actual);
@@ -214,8 +221,8 @@ async function renderAccuracy(el) {
   el.innerHTML = `<canvas id="chart-accuracy"></canvas>
     <h4>MASE per day (D-1) — lower is better</h4>${scoreTable("mase", 3)}
     <h4>CRPS per day, MW (D-1) — lower is better</h4>${scoreTable("crps", 0)}`;
-  const colors = { timestral_209m: "#b39ddb", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
-  const dashes = { timestral_209m: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
+  const colors = { timestral_209m: "#b39ddb", hgb_features_ewma_mondrian: "#80cbc4", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  const dashes = { timestral_209m: [6, 4], hgb_features_ewma_mondrian: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
   const ds = [{ label: "actual", data: actual, borderColor: "#e6e6e6", borderWidth: 2.5, pointRadius: 0, tension: 0.15 }];
   for (const [name, s] of Object.entries(series)) {
     if (name === "rte_prevision_j1") continue;

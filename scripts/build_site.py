@@ -77,6 +77,15 @@ def main() -> int:
     tuned = load_parquet(RESULTS / "backtest_tuned.parquet")
     default = load_parquet(RESULTS / "backtest_default.parquet")
     d7 = load_parquet(RESULTS / "backtest_d7.parquet")
+    v2_parts = [
+        df
+        for df in (
+            load_parquet(RESULTS / "backtest_v2.parquet"),
+            load_parquet(RESULTS / "backtest_v2b.parquet"),
+        )
+        if df is not None
+    ]
+    v2 = pd.concat(v2_parts) if v2_parts else None
     holdout = load_parquet(TUNING / "holdout.parquet")
     params_path = TUNING / "best_params.yaml"
     yaml.safe_load(params_path.read_text()) if params_path.exists() else {}
@@ -91,6 +100,7 @@ def main() -> int:
         if default is not None
         else None,
         "backtest_d7": d7.to_dict(orient="records") if d7 is not None else None,
+        "backtest_v2": v2.to_dict(orient="records") if v2 is not None else None,
         "holdout": holdout.to_dict(orient="records") if holdout is not None else None,
         "tuning": stats,
     }

@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -75,7 +75,10 @@ def _range(args: argparse.Namespace, source: str) -> tuple[datetime, datetime]:
     end = (
         datetime.fromisoformat(args.end).replace(tzinfo=UTC)
         if args.end
-        else datetime.now(UTC)
+        # the tr feed carries FUTURE rows with prevision_j1/prevision_j filled
+        # and consommation null (~J+1): fetch 2 days ahead so the D-1 forecast
+        # of tomorrow lands in the cache (the current month is always re-fetched)
+        else datetime.now(UTC) + timedelta(days=2)
     )
     return start, end
 
