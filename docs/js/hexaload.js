@@ -90,12 +90,6 @@ async function renderFullTables(el) {
         + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
           [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
     }
-    if (d.backtest_v2) {
-      const t = d.backtest_v2.slice().sort((a, b) => a.mase_mean - b.mase_mean);
-      html += "<h3>Bonus bricks (same 36 folds, tuned member params) — EWMA bias correction + Mondrian per-hour conformal + online ensemble</h3>"
-        + hexaTable(t.map(r => ({ ...r, inputs: hexaInputs(r.model) })),
-          [["model", "model", null], ["inputs", "inputs", null], ["mase_mean", "MASE", 3], ["crps_mean", "CRPS", 0]]);
-    }
     if (d.tuning && Object.keys(d.tuning).length) {
       const rows = Object.entries(d.tuning).map(([model, s]) => ({ model, ...s }))
         .sort((a, b) => (a.best_mase ?? 9) - (b.best_mase ?? 9));
