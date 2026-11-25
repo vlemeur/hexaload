@@ -1,6 +1,10 @@
 minimum_prek_version = "0.5.10"
 default_stages = ["pre-commit"]
 
+# Generated data files (written by build_site.py / forecast.py / site_curves.py,
+# pushed by the forecast bot with [skip ci]) — never touched by file hooks.
+exclude = "^docs/data/(results\\.json|accuracy\\.json|forecasts/.*\\.json)$"
+
 [[repos]]
 repo = "builtin"
 hooks = [
