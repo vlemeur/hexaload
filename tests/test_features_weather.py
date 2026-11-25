@@ -23,7 +23,12 @@ def test_hdd_cdd_thresholds(
     pd.testing.assert_series_equal(
         f["wx_cdd24"], (t - CDD_BASE_C).clip(lower=0.0), check_names=False
     )
-    assert set(b.delays.values()) == {0}  # archived forecasts: as-of safe
+    # archived forecasts have real delays (run issued at t-k -> delay k)
+    assert b.delays["wx_t_c"] == 0
+    assert b.delays["wx_dp_3h"] == 3
+    assert b.delays["wx_t_lag12h"] == 12
+    assert b.delays["wx_t_lag24h"] == 24
+    assert b.delays["wx_t_min_day"] == 24
 
 
 def test_dew_point_magnus() -> None:
@@ -51,9 +56,14 @@ def test_day_min_max_amp_and_pressure_gradient(
     t = f["wx_t_c"]
     local_day = hourly_idx.tz_convert("Europe/Paris").normalize()
     pd.testing.assert_series_equal(
-        f["wx_t_min_day"], t.groupby(local_day).transform("min"), check_names=False
+        f["wx_t_min_day"],
+        t.groupby(local_day).transform("min").shift(24),  # previous day: no leak
+        check_names=False,
     )
-    assert (f["wx_t_amp_day"] == f["wx_t_max_day"] - f["wx_t_min_day"]).all()
+    amp = f["wx_t_max_day"] - f["wx_t_min_day"]
+    pd.testing.assert_series_equal(
+        f["wx_t_amp_day"].dropna(), amp.dropna(), check_names=False
+    )
     pd.testing.assert_series_equal(
         f["wx_dp_3h"], f["wx_p_hpa"].diff(3), check_names=False
     )

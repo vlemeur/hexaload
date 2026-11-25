@@ -73,3 +73,28 @@ def test_mini_backtest_baselines_only(tmp_path, synthetic_processed):
     # the near-perfect RTE reference beats the naive baseline on these folds
     mase = dict(zip(table["model"], table["mase_mean"], strict=True))
     assert mase["rte_prevision_j1"] < mase["naive"]
+
+
+def test_backtest_long_horizon_d1_references_scored_on_24h(
+    tmp_path, synthetic_processed
+):
+    """h=48 (D+2-style): seasonal-naive sp=24 would read the future beyond 24 h —
+    it and the RTE reference must be scored on the first 24 h of each block,
+    without tripping the anti-leakage assertion."""
+    cfg = BacktestConfig(
+        start="2026-10-01",
+        end="2026-11-01",
+        horizon=48,
+        window_length=24 * 20,
+        step_length=24 * 5,
+        skip=ALL_MODELS,
+        out=str(tmp_path / "bt48.parquet"),
+    )
+    table = run(cfg)
+    assert set(table["model"]) == {
+        "naive",
+        "seasonal_naive_24",
+        "seasonal_naive_168",
+        "rte_prevision_j1",
+    }
+    assert table["mase_mean"].notna().all()

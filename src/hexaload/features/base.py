@@ -59,10 +59,10 @@ class FeatureBlock:
             )
         if any(d < 0 for d in self.delays.values()):
             raise ValueError(f"{self.name}: delays must be >= 0 hours")
-        if not self.reads_target and any(d != 0 for d in self.delays.values()):
-            raise ValueError(
-                f"{self.name}: exogenous block (reads_target=False) must have delay 0"
-            )
+        # exogenous blocks may carry delay > 0 (e.g. archived-forecast lags read
+        # the run issued at t-k): apply_as_of masks them uniformly, so they are
+        # still leakage-safe — only their reads_target=False nature matters for
+        # exogenous_columns().
 
     @property
     def columns(self) -> list[str]:

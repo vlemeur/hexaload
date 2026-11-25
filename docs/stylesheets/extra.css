@@ -1,0 +1,65 @@
+/* Cards, stat callouts and tables follow the active color scheme
+ * (slate = dark default, default = light). */
+:root, [data-md-color-scheme="default"] { --hexa-accent: #5e35b1; }
+[data-md-color-scheme="slate"] { --hexa-accent: #b39ddb; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+.card-grid .card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.5rem;
+  padding: 0.9rem 1rem;
+  background: var(--md-code-bg-color);
+}
+.card-grid .card h3 { margin: 0 0 0.3rem 0; font-size: 1rem; }
+.card-grid .card p { margin: 0; font-size: 0.85rem; color: var(--md-default-fg-color--light); }
+
+/* Big stat callouts (home intro + hold-out cards). */
+.stat-cards, .holdout-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.8rem;
+  margin: 1.2rem 0;
+}
+.stat-cards .stat, .holdout-cards .stat {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.6rem;
+  padding: 1rem;
+  background: var(--md-code-bg-color);
+}
+.stat-num { font-size: 2rem; font-weight: 700; color: var(--hexa-accent); }
+.stat-label { font-size: 0.8rem; color: var(--md-default-fg-color--light); margin-top: 0.2rem; }
+.holdout-model { font-size: 0.8rem; font-weight: 600; color: var(--md-default-fg-color--light); }
+.holdout-card .stat-num { font-size: 1.6rem; }
+.holdout-card.best { border-color: var(--hexa-accent); }
+
+/* Compact modern tables. */
+.md-typeset table:not([class]) {
+  font-size: 0.8rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.4rem;
+}
+.md-typeset table:not([class]) th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--md-default-fg-color--light);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+.md-typeset table:not([class]) td { border-top: 1px solid var(--md-default-fg-color--lightest); }
+.md-typeset table:not([class]) tbody tr:first-child td { border-top: none; }
+.md-typeset table:not([class]) tbody tr:hover { background: var(--md-code-bg-color); }
+
+.holdout-inputs { font-size: 0.68rem; opacity: 0.75; }
+
+.hexa-note { font-size: 0.78rem; color: var(--md-default-fg-color--light); }
+
+/* best score cell in the accuracy tables */
+.md-typeset td.hexa-best {
+  background: color-mix(in srgb, var(--hexa-accent) 28%, transparent);
+  font-weight: 600;
+}

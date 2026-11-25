@@ -34,9 +34,8 @@ def test_block_rejects_delay_mismatch_and_negative() -> None:
         FeatureBlock("toy", frame.assign(b=[2.0] * 10), {"a": 0})
     with pytest.raises(ValueError, match=">= 0"):
         FeatureBlock("toy", frame, {"a": -1}, reads_target=True)
-    # exogenous block (reads_target=False) must have delay 0
-    with pytest.raises(ValueError, match="delay 0"):
-        FeatureBlock("exo", frame, {"a": 5})
+    # exogenous blocks may carry delay > 0 (masked uniformly by apply_as_of)
+    FeatureBlock("exo", frame, {"a": 5})
     with pytest.raises(ValueError, match="timezone-aware"):
         FeatureBlock(
             "toy",

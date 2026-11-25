@@ -203,6 +203,14 @@ def _next_month(dt: datetime) -> datetime:
     return dt.replace(month=dt.month + 1)
 
 
+def month_key_is_current(key: str, now: datetime | None = None) -> bool:
+    """The ongoing UTC month is always stale: it grows every day (the TR tail
+    keeps ~85 days, the weather archive gains new issue dates), so it must be
+    re-fetched on every update even if its cache file exists."""
+    now = now or datetime.now(UTC)
+    return key == now.strftime("%Y-%m")
+
+
 def iter_month_ranges(
     start: datetime, end: datetime
 ) -> list[tuple[datetime, datetime]]:
@@ -272,7 +280,12 @@ def fetch_dataset(
     for month_start, month_end in ranges:
         key = month_start.strftime("%Y-%m")
         path = cache / f"{key}.parquet"
-        if not refresh and manifest.get("ranges", {}).get(key) and path.exists():
+        if (
+            not refresh
+            and not month_key_is_current(key)
+            and manifest.get("ranges", {}).get(key)
+            and path.exists()
+        ):
             logger.info("cache hit: %s", key)
             files.append(path)
             continue
@@ -398,7 +411,12 @@ def fetch_openmeteo_dataset(
     for month_start, month_end in ranges:
         key = month_start.strftime("%Y-%m")
         path = cache / f"{key}.parquet"
-        if not refresh and manifest.get("ranges", {}).get(key) and path.exists():
+        if (
+            not refresh
+            and not month_key_is_current(key)
+            and manifest.get("ranges", {}).get(key)
+            and path.exists()
+        ):
             logger.info("cache hit: %s", key)
             files.append(path)
             continue
@@ -495,3 +513,42 @@ def stitch_eco2mix(cons_def: pd.DataFrame, tr: pd.DataFrame) -> pd.DataFrame:
     out = pd.concat([a, b])
     out = out[~out.index.duplicated(keep="first")].sort_index()
     return out
+
+
+# Live forecast API — used ONLY by scripts/forecast.py at freeze time. The
+# archive (above) is keyed by valid time (per-day 00Z runs), so it cannot cover
+# future targets; the live API returns the current run, issued before the
+# freeze, covering the target horizon. Same model/vars/grid as the archive.
+OPENMETEO_LIVE_BASE = "https://api.open-meteo.com/v1"  # HttpClient appends /forecast
+
+
+def fetch_openmeteo_live_national(
+    start: datetime,
+    end: datetime,
+    *,
+    model: str = OPENMETEO_MODEL,
+    step: float = GRID_STEP_DEG,
+    points_per_request: int = POINTS_PER_REQUEST,
+    client: HttpClient | None = None,
+) -> pd.DataFrame:
+    """Current live forecast for the France grid over [start, end] UTC valid
+    times, aggregated to the national hourly frame (same pipeline as the
+    archive: validate -> population-weighted mean per UTC hour)."""
+    from .validate import aggregate_weather_national, validate_weather
+
+    client = client or HttpClient(base_url=OPENMETEO_LIVE_BASE)
+    points = france_grid(step)
+    records: list[dict[str, Any]] = []
+    for i in range(0, len(points), points_per_request):
+        packet = points[i : i + points_per_request]
+        # end_date is inclusive on the API; add a day so `end` is covered
+        records.extend(
+            fetch_openmeteo_month(
+                client, packet, start, end + timedelta(days=1), model=model
+            )
+        )
+    clean, report = validate_weather(pd.DataFrame(records))
+    logger.info(
+        "live openmeteo %s: %d raw records, %d valid", model, len(records), len(clean)
+    )
+    return aggregate_weather_national(clean)

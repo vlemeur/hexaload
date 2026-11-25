@@ -45,6 +45,12 @@ def main() -> int:
         help="comma-separated model names to skip (e.g. 'sktime_autoarima')",
     )
     parser.add_argument(
+        "--drop-features",
+        default="",
+        help="comma-separated feature columns to drop for feature models "
+        "(e.g. 'lag_rte_prevision_j1' for a no-RTE-input variant)",
+    )
+    parser.add_argument(
         "--params",
         default=None,
         help="YAML of per-model tuned params (e.g. results/tuning/best_params.yaml)",
@@ -66,6 +72,7 @@ def main() -> int:
         expanding=args.expanding,
         skip=args.skip,
         params=args.params,
+        drop_features=args.drop_features,
         out=args.out,
     )
     table = run(cfg)
