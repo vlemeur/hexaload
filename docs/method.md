@@ -48,8 +48,7 @@ then 0.77–2.79 — vs 0.29–0.35 for GBMs and 0.27 for Timestral. **None beat
 At D-1, national hourly load is calendar + forecast weather + persistence, which the
 55 leakage-safe features hand directly to GBMs; one year of one smooth series cannot
 train deep nets from scratch. The dividing line is **data per parameter**: pre-trained
-Timestral (209 M) wins, from-scratch nets don't. Compute budget: M4, 60 min/model,
-≤20 epochs; full 36-fold torch backtest is a documented follow-up.
+Timestral (209 M) wins, from-scratch nets don't.
 
 ## Data
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -74,12 +75,14 @@ def synthetic_processed(tmp_path, monkeypatch):
 
 def test_freeze_as_of_is_1200_paris_day_before():
     # summer (CEST = UTC+2): 12:00 Paris = 10:00 UTC
-    target = pd.Timestamp("2026-07-10", tz="UTC")  # midnight UTC == 02:00 Paris
-    as_of = forecast.freeze_as_of(target)
+    target = cast(pd.Timestamp, pd.Timestamp("2026-07-10", tz="UTC"))
+    from hexaload.backtest.recursive import freeze_as_of
+
+    as_of = freeze_as_of(target)
     assert as_of == pd.Timestamp("2026-07-09 10:00", tz="UTC")
     # winter (CET = UTC+1): 12:00 Paris = 11:00 UTC
-    target = pd.Timestamp("2026-01-10", tz="UTC")
-    assert forecast.freeze_as_of(target) == pd.Timestamp("2026-01-09 11:00", tz="UTC")
+    target = cast(pd.Timestamp, pd.Timestamp("2026-01-10", tz="UTC"))
+    assert freeze_as_of(target) == pd.Timestamp("2026-01-09 11:00", tz="UTC")
 
 
 def test_default_target_depends_on_paris_noon():

@@ -22,7 +22,7 @@ as the absolute reference.
 Hold-out 2026 (11 folds, scored once): timestral **0.161** (CRPS 295), hgb
 0.287 (CRPS 451). Without RTE's forecast as input, our GBM still beats RTE
 (0.476 vs 0.516). From-scratch deep nets (MLP/RNN/TCN/N-HiTS/PatchTST) do not
-beat the GBMs on one year of data — documented on `/method/`.
+beat the GBMs on one year of data and has been abandonned for ressources consumption concerns.
 
 ## Run
 

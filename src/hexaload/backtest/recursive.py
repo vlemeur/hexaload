@@ -29,6 +29,56 @@ if TYPE_CHECKING:
 # longest rolling window (720 h) ending at t-horizon, plus margin
 PAD_H = 24 * 31
 
+FREEZE_HOUR_PARIS = 12  # production freeze: J-1 12:00 Paris
+
+
+def freeze_as_of(target_utc: pd.Timestamp) -> pd.Timestamp:
+    """Data freeze for the forecast of ``target``: J-1 at 12:00 Paris, UTC."""
+    j_paris = pd.Timestamp(target_utc).tz_convert("Europe/Paris")
+    freeze = (
+        (j_paris - pd.Timedelta(days=1)).normalize().replace(hour=FREEZE_HOUR_PARIS)
+    )
+    return freeze.tz_convert("UTC")
+
+
+def block_for(as_of: pd.Timestamp, test_idx: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Contiguous model block from as_of+1h through the end of ``test_idx``
+    (freeze at 12:00 Paris, target day starts at 00:00 Paris — the model must
+    predict the contiguous block after the context, then we slice the target
+    day out of it)."""
+    start = as_of + pd.Timedelta(hours=1)
+    n = int((test_idx[-1] - start) / pd.Timedelta(hours=1)) + 1
+    return pd.date_range(start, periods=n, freq="h", tz="UTC")
+
+
+def build_future_features(
+    *,
+    as_of: pd.Timestamp,
+    block: pd.DatetimeIndex,
+    y: pd.Series,
+    wx: pd.DataFrame,
+    prevision_j1: pd.Series | None,
+    columns: list[str],
+    horizon: int = 24,
+    pad_h: int = 72,
+) -> pd.DataFrame:
+    """Feature table over the contiguous ``block``, built with the same blocks
+    + as_of mask as the backtest, columns aligned to the training table."""
+    idx_build = pd.date_range(
+        block[0] - pd.Timedelta(hours=pad_h),
+        periods=len(block) + pad_h,
+        freq="h",
+        tz="UTC",
+    )
+    X_build, _man = build_feature_table(
+        idx_build, as_of=as_of, wx=wx, y=y, prevision_j1=prevision_j1, horizon=horizon
+    )
+    X_future = X_build.loc[block]
+    missing = [c for c in columns if c not in X_future.columns]
+    if missing:
+        raise ValueError(f"future feature table misses columns {missing[:5]}")
+    return X_future[list(columns)]
+
 
 def recursive_predict(
     model: BaseForecaster,
