@@ -32,12 +32,12 @@ PAD_H = 24 * 31
 FREEZE_HOUR_PARIS = 12  # production freeze: J-1 12:00 Paris
 
 
-def freeze_as_of(target_utc: pd.Timestamp) -> pd.Timestamp:
-    """Data freeze for the forecast of ``target``: J-1 at 12:00 Paris, UTC."""
+def freeze_as_of(
+    target_utc: pd.Timestamp, hour: int = FREEZE_HOUR_PARIS
+) -> pd.Timestamp:
+    """Data freeze for the forecast of ``target``: J-1 at ``hour``:00 Paris, UTC."""
     j_paris = pd.Timestamp(target_utc).tz_convert("Europe/Paris")
-    freeze = (
-        (j_paris - pd.Timedelta(days=1)).normalize().replace(hour=FREEZE_HOUR_PARIS)
-    )
+    freeze = (j_paris - pd.Timedelta(days=1)).normalize().replace(hour=hour)
     return freeze.tz_convert("UTC")
 
 

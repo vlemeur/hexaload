@@ -3,15 +3,17 @@
  * updates the site WITHOUT a rebuild. */
 const HEXA_RAW = "https://raw.githubusercontent.com/vlemeur/hexaload/main/docs/data";
 
-/* Local preview (zensical serve): the built site ships docs/data/ relatively,
- * so try the relative path first. In production, try the raw repo first so a
- * JSON push updates the page without a rebuild, then fall back to the copy
- * baked into the built site. */
+/* Local preview (zensical serve) serves at the root; GitHub Pages serves under
+ * /hexaload/. Use a root-absolute path so subpages (/monitoring/) resolve
+ * correctly. In production, try the raw repo first so a JSON push updates the
+ * page without a rebuild, then fall back to the copy baked into the built
+ * site. */
+const HEXA_PREFIX = location.hostname.endsWith("github.io") ? "/hexaload/" : "/";
 function hexaCandidates(path) {
   const local = ["localhost", "127.0.0.1"].includes(location.hostname);
-  const rel = `data/${path}`;
+  const site = `${HEXA_PREFIX}data/${path}`;
   const raw = `${HEXA_RAW}/${path}`;
-  return local ? [rel, raw] : [raw, rel];
+  return local ? [site, raw] : [raw, site];
 }
 
 async function hexaFetch(path) {

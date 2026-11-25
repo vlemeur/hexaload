@@ -83,6 +83,8 @@ def test_freeze_as_of_is_1200_paris_day_before():
     # winter (CET = UTC+1): 12:00 Paris = 11:00 UTC
     target = cast(pd.Timestamp, pd.Timestamp("2026-01-10", tz="UTC"))
     assert freeze_as_of(target) == pd.Timestamp("2026-01-09 11:00", tz="UTC")
+    # custom freeze hour (17:00 Paris re-run): winter 17:00 Paris = 16:00 UTC
+    assert freeze_as_of(target, hour=17) == pd.Timestamp("2026-01-09 16:00", tz="UTC")
 
 
 def test_default_target_depends_on_paris_noon():

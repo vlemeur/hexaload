@@ -37,11 +37,12 @@ reads a JSON file client-side, so a daily push updates it without a rebuild.
 ## Accuracy — the last 7 days, each forecast made at D-1
 
 For each of the last 7 days: the same D-1 forecast (h=24) the models would
-have published the day before at 12:00 Paris, against actuals and RTE's D-1
-forecast. Feature models (ridge/HGB/XGB) are predicted hour by hour over the
-12 h gap before the target day, feeding their own predictions back as lags —
-the same recursive scheme the daily job uses. RTE's D-1 forecast is published
-only later on J-1, so where it is not yet available at the freeze, the models
+have published the day before — the daily job freezes at 12:00 Paris (11:50
+run) then refreshes at 17:00 (17:50 run, once RTE's D-1 is out) — against
+actuals and RTE's D-1 forecast. Feature models (ridge/HGB/XGB) are predicted
+hour by hour over the gap between freeze and target day, feeding their own
+predictions back as lags — the same recursive scheme the daily job uses.
+Where RTE's forecast is not yet available at the 12:00 freeze, the models
 use the 24 h load lag as its proxy.
 
 <div id="accuracy-chart">Loading…</div>

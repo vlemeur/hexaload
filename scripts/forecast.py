@@ -1,7 +1,9 @@
 """Daily D-1 forecast for tomorrow (idempotent) — `just forecast`.
 
-Single fit per model on data available at **J-1 12:00 Paris** (the freeze time,
-like the reference dashboard): train window = last 365 days before the freeze.
+Single fit per model on data available at the **freeze time on J-1** (default
+12:00 Paris; the daily 17:50 re-run uses ``--freeze-hour 17 --force`` once RTE's
+``prevision_j1`` is published, so the served forecast matches RTE's information
+time): train window = last 365 days before the freeze.
 Writes ``docs/data/forecasts/<J>.json`` with, per model, the D-1 (h=24) median +
 90 % band (q05/q95) and the D+7 (h=168) median curve. The site's Forecast charts
 fetch this file client-side — a JSON push updates the site without a rebuild.
@@ -49,12 +51,12 @@ DEFAULT_MODELS = ("timestral_209m", "hgb_features_ewma_mondrian")
 logger = logging.getLogger(__name__)
 
 
-def default_target(now: pd.Timestamp) -> pd.Timestamp:
-    """Forecast target (Paris midnight, tz=Paris): tomorrow if before noon
-    Paris time, else the day after tomorrow."""
+def default_target(now: pd.Timestamp, freeze_hour: int = FREEZE_HOUR) -> pd.Timestamp:
+    """Forecast target (Paris midnight, tz=Paris): tomorrow if before the
+    freeze hour Paris time, else the day after tomorrow."""
     now_paris = now.tz_convert(PARIS)
     return now_paris.normalize() + pd.Timedelta(
-        days=1 if now_paris.hour < FREEZE_HOUR else 2
+        days=1 if now_paris.hour < freeze_hour else 2
     )
 
 
@@ -78,6 +80,13 @@ def main() -> int:
         "--force", action="store_true", help="overwrite an existing JSON"
     )
     parser.add_argument(
+        "--freeze-hour",
+        type=int,
+        default=FREEZE_HOUR,
+        help=f"freeze hour, Paris time, on J-1 (default {FREEZE_HOUR}:00 — "
+        "the 17:50 re-run uses 17 once RTE's prevision_j1 is published)",
+    )
+    parser.add_argument(
         "--no-live-weather",
         dest="live_weather",
         action="store_false",
@@ -90,11 +99,11 @@ def main() -> int:
     target_paris = (
         pd.Timestamp(args.date).tz_localize(PARIS)
         if args.date
-        else default_target(pd.Timestamp.now(tz="UTC"))
+        else default_target(pd.Timestamp.now(tz="UTC"), args.freeze_hour)
     )
     target = target_paris.tz_convert("UTC")
     date_label = str(target_paris.date())
-    as_of = freeze_as_of(target)
+    as_of = freeze_as_of(target, args.freeze_hour)
     out_path = OUT_DIR / f"{date_label}.json"
     y, ref, wx_hist, _src = load_targets()
     if out_path.exists() and not args.force:
