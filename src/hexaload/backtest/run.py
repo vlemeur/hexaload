@@ -210,18 +210,29 @@ def run(cfg: BacktestConfig) -> pd.DataFrame:
                     split.test, X_te, DEFAULT_QUANTILES
                 )
         for model, pred in preds.items():
+            # RTE publishes only a D-1 (24 h) forecast: with a longer horizon
+            # (D+7), score the reference on the first 24 h of the test block
+            if model == "rte_prevision_j1" and len(split.test) > 24:
+                test_eval = split.test[:24]
+            else:
+                test_eval = split.test
+            y_eval = y_test.loc[test_eval]
+            pred_eval = pred.reindex(test_eval)
             rec = {
                 "fold": str(split.test_start.date()),
                 "model": model,
-                "mae": mae(y_test, pred),
-                "rmse": rmse(y_test, pred),
-                "mase": mase(y_test, pred, y_train=y_train, sp=DEFAULT_SP),
+                "mae": mae(y_eval, pred_eval),
+                "rmse": rmse(y_eval, pred_eval),
+                "mase": mase(y_eval, pred_eval, y_train=y_train, sp=DEFAULT_SP),
             }
             if model in qpreds:
                 samples = sample_quantiles(
-                    qpreds[model], DEFAULT_QUANTILES, N_SAMPLES, seed=0
+                    qpreds[model].reindex(test_eval),
+                    DEFAULT_QUANTILES,
+                    N_SAMPLES,
+                    seed=0,
                 )
-                rec["crps"] = crps(y_test, samples)
+                rec["crps"] = crps(y_eval, samples)
             records.append(rec)
             prog.advance(1, model=model)
     prog.close()
