@@ -57,9 +57,12 @@ target history it reads). At each fold origin, target-reading features
 (`lag_load_*`, `roll_*`, `lag_rte_prevision_j1`) are masked to NaN wherever
 `t − delay > as_of`. Exogenous inputs — calendar and *archived weather
 forecasts* — are known in advance; observations never enter, only forecasts
-as they were available at forecast time. In production (freeze J-1 12:00
-Paris) the 12 h gap before the target day is handled by recursive prediction,
-and RTE's not-yet-published forecast is proxied by the 24 h load lag.
+as they were available at forecast time. In production the forecast is
+published at 11:50 Paris (freeze J-1 12:00) then refreshed at 17:50 with a
+17:00 freeze, once RTE's `prevision_j1` is out — same information time as the
+reference. The gap between freeze and target day is handled by recursive
+prediction; where RTE's forecast is not yet published at the freeze, the
+24 h load lag proxies it.
 
 **Metrics.** Point errors in MAE / RMSE / MASE (seasonal period 24, denominator
 on the train fold); intervals in CRPS over 19 quantile levels (0.05–0.95).

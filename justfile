@@ -66,7 +66,8 @@ site-serve:
 site-curves:
     uv run --locked python scripts/site_curves.py
 
-# Daily D-1 forecast for tomorrow (freeze J-1 12:00 Paris) -> docs/data/forecasts/<J>.json
+# Daily D-1 forecast for tomorrow -> docs/data/forecasts/<J>.json
+# (default freeze J-1 12:00 Paris; the CI re-runs at 17:50 with --freeze-hour 17)
 forecast date="" force="":
     uv run --locked python scripts/forecast.py {{if force == "force" { "--force" } else { "" } }} {{if date != "" { "--date " + date } else { "" } }}
 

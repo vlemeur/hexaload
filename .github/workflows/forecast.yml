@@ -2,7 +2,9 @@ name: forecast
 
 # Daily D-1 forecast, published ~11:50 Paris time as a JSON push to main
 # (docs/data/forecasts/<J>.json) — the /live/ section of the site fetches it
-# client-side, so no site rebuild is needed.
+# client-side, so no site rebuild is needed. At 17:50 Paris the run re-forecasts
+# tomorrow with a 17:00 freeze, once RTE's prevision_j1 is out (same information
+# time as the reference).
 #
 # 11:50 Paris = 10:50 UTC in summer (CEST) and 11:50 UTC in winter (CET), so
 # the cron fires twice and a local-time guard keeps only the right run.
@@ -33,25 +35,41 @@ jobs:
         run: uv sync --locked
       - name: Guard — only run at 11:50 / 17:50 Paris time (manual runs always pass)
         run: |
+          MODE=morning
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "manual run (workflow_dispatch) — time guard skipped"
-            exit 0
+            echo "manual run (workflow_dispatch) — time guard skipped, morning mode"
+          else
+            H=$(date -d "TZ=\"Europe/Paris\" now" +%H%M 2>/dev/null || TZ=Europe/Paris date +%H%M)
+            echo "Paris time: $H"
+            if [ "$H" -ge 1145 ] && [ "$H" -le 1200 ]; then
+              MODE=morning
+            elif [ "$H" -ge 1745 ] && [ "$H" -le 1800 ]; then
+              MODE=evening
+            else
+              echo "outside the 11:50 / 17:50 Paris windows — skipping (idempotent)"
+              exit 0
+            fi
           fi
-          H=$(date -d "TZ=\"Europe/Paris\" now" +%H%M 2>/dev/null || TZ=Europe/Paris date +%H%M)
-          echo "Paris time: $H"
-          if ! { [ "$H" -ge 1145 ] && [ "$H" -le 1200 ]; } && ! { [ "$H" -ge 1745 ] && [ "$H" -le 1800 ]; }; then
-            echo "outside the 11:50 / 17:50 Paris windows — skipping (idempotent)"
-            exit 0
-          fi
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
       # Refresh the data cache (incremental monthly cache; the current month
       # is always re-fetched), rebuild processed data + features.
       - name: Update data cache
         run: uv run --locked python scripts/fetch_data.py --source all
       - name: Rebuild features
         run: uv run --locked python scripts/build_features.py
-      # Idempotent by date: re-running for the same J is a no-op.
-      - name: Forecast tomorrow (freeze J-1 12:00 Paris)
-        run: uv run --locked python scripts/forecast.py
+      # Morning run: publish the D-1 forecast with the 12:00 Paris freeze
+      # (idempotent by date). Evening run (17:50): re-forecast tomorrow with
+      # the 17:00 Paris freeze — by then RTE's prevision_j1 for J is published,
+      # so our models get the same information time as the reference.
+      - name: Forecast tomorrow (freeze J-1 12:00, refreshed 17:00 Paris)
+        run: |
+          if [ "$MODE" = "evening" ]; then
+            J=$(date -d "TZ=\"Europe/Paris\" tomorrow" +%F)
+            echo "evening re-run: target $J, freeze 17:00 Paris"
+            uv run --locked python scripts/forecast.py --force --date "$J" --freeze-hour 17
+          else
+            uv run --locked python scripts/forecast.py
+          fi
         env:
           HF_HUB_OFFLINE: "0"
       # Score the published forecasts vs actuals + CUSUM drift -> JSON push
