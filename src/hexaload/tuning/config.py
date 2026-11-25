@@ -23,6 +23,7 @@ class TuningConfig:
     max_epochs_torch: int = (
         20  # cap for torch models during tuning (early stop does the rest)
     )
+    wrap: bool = True  # evaluate feature models with EWMA+Mondrian wrappers on
     prune_warmup_epochs: int = 8  # manual ASHA pruning kicks in after this many epochs
     # tuning uses a SHORTER window than the final backtest (cheaper trials; the
     # backtest itself always runs the full window_length below)

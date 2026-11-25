@@ -69,13 +69,27 @@ def build_variant(model: str, model_params: dict[str, dict] | None = None) -> An
     if model == "ens_features":
         members = ("hgb_features", "xgb_features", "ridge_features")
         return EnsembleFeatures([build_model(m, params.get(m)) for m in members])
-    if model.endswith("_ewma_mondrian"):
-        base = model[: -len("_ewma_mondrian")]
-        return MondrianConformal(BiasEWMA(build_model(base, params.get(base))))
-    for suffix, wrap in (("_ewma", BiasEWMA), ("_mondrian", MondrianConformal)):
+
+    def _mk(base: str, suffix: str):
+        bp = dict(params.get(base) or {})
+        w = {k: bp.pop(k) for k in WRAPPER_KEYS if k in bp}
+        inner = build_model(base, bp)
+        vh = int(w.get("wrap_val_hours", 24 * 14))
+        if suffix == "_ewma_mondrian":
+            return MondrianConformal(
+                BiasEWMA(inner, val_hours=vh, alpha=float(w.get("ewma_alpha", 0.1))),
+                val_hours=vh,
+                min_bucket=int(w.get("mondrian_min_bucket", 7)),
+            )
+        if suffix == "_ewma":
+            return BiasEWMA(inner, val_hours=vh, alpha=float(w.get("ewma_alpha", 0.1)))
+        return MondrianConformal(
+            inner, val_hours=vh, min_bucket=int(w.get("mondrian_min_bucket", 7))
+        )
+
+    for suffix in ("_ewma_mondrian", "_ewma", "_mondrian"):
         if model.endswith(suffix):
-            base = model[: -len(suffix)]
-            return wrap(build_model(base, params.get(base)))
+            return _mk(model[: -len(suffix)], suffix)
     raise ValueError(f"unknown variant {model!r}")
 
 
@@ -94,10 +108,18 @@ def default_params(model: str) -> dict[str, Any]:
     return {}
 
 
+# hyperparameters of the post-hoc wrappers (EWMA bias + Mondrian conformal),
+# tuned alongside the base model; consumed by build_variant / the tuning
+# objective, never passed to the base model constructor
+WRAPPER_KEYS = ("ewma_alpha", "wrap_val_hours", "mondrian_min_bucket")
+
+
 def _normalize_params(params: dict[str, Any]) -> dict[str, Any]:
     """Decode tuple params stored as "a-b-c" strings in the best-params YAML
     (Optuna categoricals must be scalars, so tuples are string-encoded)."""
     p = dict(params)
+    for k in WRAPPER_KEYS:
+        p.pop(k, None)
     for key in ("hidden", "pool_rates"):
         v = p.get(key)
         if isinstance(v, str):
@@ -135,10 +157,24 @@ def build_model(model: str, params: dict[str, Any] | None = None) -> Any:
     raise ValueError(f"unknown model {model!r}")
 
 
+def _wrapper_space(trial: Any) -> dict[str, Any]:
+    """Search space of the post-hoc wrappers (EWMA bias + Mondrian conformal)."""
+    return {
+        "ewma_alpha": trial.suggest_float("ewma_alpha", 0.02, 0.5, log=True),
+        "wrap_val_hours": trial.suggest_categorical(
+            "wrap_val_hours", [24 * 7, 24 * 14, 24 * 30]
+        ),
+        "mondrian_min_bucket": trial.suggest_int("mondrian_min_bucket", 5, 14),
+    }
+
+
 def suggest_params(model: str, trial: Any) -> dict[str, Any]:
     """One Optuna point in the search space of ``model``."""
     if model == "ridge_features":
-        return {"alpha": trial.suggest_float("alpha", 1e-3, 100.0, log=True)}
+        return {
+            "alpha": trial.suggest_float("alpha", 1e-3, 100.0, log=True),
+            **_wrapper_space(trial),
+        }
     if model == "hgb_features":
         return {
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
@@ -151,6 +187,7 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             # torch/libomp), so each fit is single-threaded — keep trees cheap,
             # early stopping does the rest
             "max_iter": trial.suggest_int("max_iter", 150, 600),
+            **_wrapper_space(trial),
         }
     if model == "xgb_features":
         return {
@@ -161,6 +198,7 @@ def suggest_params(model: str, trial: Any) -> dict[str, Any]:
             "reg_lambda": trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
             "n_estimators": trial.suggest_int("n_estimators", 200, 800),
             "early_stopping_rounds": trial.suggest_int("early_stopping_rounds", 20, 60),
+            **_wrapper_space(trial),
         }
     if model == "mlp_features":
         hidden = tuple(

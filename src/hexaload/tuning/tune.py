@@ -188,7 +188,27 @@ def _score_one_fold(
         # hold-out then costs the same per fold as a tuning trial. The full
         # 36-fold backtest (backtest/run.py) is NOT capped — full budget there.
         params = {**params, "max_epochs": cfg.max_epochs_torch}
-    m = build_model(model, params)
+    if cfg.wrap and model in FEATURE_MODELS:
+        # systematic post-hoc improvements: the tuned objective IS the wrapped
+        # model (EWMA bias correction + Mondrian per-hour conformal), with the
+        # wrapper hyperparameters tuned alongside the base ones
+        from hexaload.models import BiasEWMA, MondrianConformal
+        from hexaload.tuning.spaces import WRAPPER_KEYS
+
+        params = dict(params)
+        w = {k: params.pop(k) for k in WRAPPER_KEYS if k in params}
+        vh = int(w.get("wrap_val_hours", 24 * 14))
+        m = MondrianConformal(
+            BiasEWMA(
+                build_model(model, params),
+                val_hours=vh,
+                alpha=float(w.get("ewma_alpha", 0.1)),
+            ),
+            val_hours=vh,
+            min_bucket=int(w.get("mondrian_min_bucket", 7)),
+        )
+    else:
+        m = build_model(model, params)
     q = None
     if model in FEATURE_MODELS:
         m.fit(y_train, X_fold.loc[split.train])
@@ -369,7 +389,9 @@ def run_study(
     progress = progress or NullProgress()
     init_mlflow(cfg)
     Path(cfg.storage).parent.mkdir(parents=True, exist_ok=True)
-    study_name = f"hexaload-{model}"
+    study_name = f"hexaload-{model}" + (
+        "-w" if cfg.wrap and model in FEATURE_MODELS else ""
+    )
     study = optuna.create_study(
         study_name=study_name,
         storage=f"sqlite:///{Path(cfg.storage).resolve()}",
