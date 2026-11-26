@@ -1,7 +1,5 @@
 {
- "status": "fallback",
- "degraded_inputs": [
-  "rte_prevision_j1 not published yet for the target day"
- ],
+ "status": "served",
+ "degraded_inputs": [],
  "date": "2026-11-27"
 }
