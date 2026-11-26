@@ -92,6 +92,7 @@ jobs:
       # fails (e.g. Open-Meteo 429 from a shared CI egress IP), fall back to
       # the restored cache so the daily forecast still goes out.
       - name: Update data cache
+        id: update
         if: steps.guard.outputs.skip != 'true'
         env:
           # daily crons fail fast on 429 (>60s); a manual seeding run can pass
@@ -111,21 +112,24 @@ jobs:
       # Save the data cache AFTER the fetch (a single actions/cache step would
       # save the path before the fetch populates it). Same key as the restore;
       # the save is skipped when the key already exists (entries are immutable).
+      # always(): an `if` without a status-check function gets an implicit
+      # success(), so without always() the save would be SKIPPED when the fetch
+      # step fails — we want the partial cache saved exactly then.
       - name: Save data cache
-        if: steps.guard.outputs.skip != 'true'
+        if: ${{ always() && steps.guard.outputs.skip != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: data/cache
           key: hexaload-data-${{ runner.os }}-${{ steps.month.outputs.month }}
       - name: Rebuild features
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
         run: uv run --locked python scripts/build_features.py
       # Morning run: publish the D-1 forecast with the 12:00 Paris freeze
       # (idempotent by date). Evening run (17:50): re-forecast tomorrow with
       # the 17:00 Paris freeze — by then RTE's prevision_j1 for J is published,
       # so our models get the same information time as the reference.
       - name: Forecast tomorrow (freeze J-1 12:00, refreshed 17:00 Paris)
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
         run: |
           if [ "$MODE" = "evening" ]; then
             J=$(date -d "TZ=\"Europe/Paris\" tomorrow" +%F)
@@ -139,14 +143,14 @@ jobs:
       # Save the HF cache AFTER the forecast downloaded the weights (same
       # restore-early/save-late split as the data cache).
       - name: Save HF model weights
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/huggingface
           key: hf-weights-${{ runner.os }}-v1
       # Score the published forecasts vs actuals + CUSUM drift -> JSON push
       - name: Monitoring (daily scores + status)
-        if: steps.guard.outputs.skip != 'true'
+        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
         run: uv run --locked python scripts/monitor.py
       - name: Push forecast JSON (skip if unchanged)
         run: |
