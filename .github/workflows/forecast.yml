@@ -100,11 +100,13 @@ jobs:
           HEXALOAD_MAX_429_WAIT_S: ${{ inputs.max_429_wait || '60' }}
         run: |
           if uv run --locked python scripts/fetch_data.py --source all; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ steps.data-cache.outputs.cache-hit }}" = "true" ]; then
             echo "WARN: fetch failed but a data cache was restored — replaying it offline"
             uv run --locked python scripts/fetch_data.py --source all --offline
+            echo "status=degraded" >> "$GITHUB_OUTPUT"
           else
             echo "ERROR: fetch failed and no data cache was restored — failing so the run can be retried"
             exit 1
@@ -122,14 +124,14 @@ jobs:
           path: data/cache
           key: hexaload-data-${{ runner.os }}-${{ steps.month.outputs.month }}
       - name: Rebuild features
-        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
+        if: ${{ success() && steps.guard.outputs.skip != 'true' && steps.update.outputs.status }}
         run: uv run --locked python scripts/build_features.py
       # Morning run: publish the D-1 forecast with the 12:00 Paris freeze
       # (idempotent by date). Evening run (17:50): re-forecast tomorrow with
       # the 17:00 Paris freeze — by then RTE's prevision_j1 for J is published,
       # so our models get the same information time as the reference.
       - name: Forecast tomorrow (freeze J-1 12:00, refreshed 17:00 Paris)
-        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
+        if: ${{ success() && steps.guard.outputs.skip != 'true' && steps.update.outputs.status }}
         run: |
           if [ "$MODE" = "evening" ]; then
             J=$(date -d "TZ=\"Europe/Paris\" tomorrow" +%F)
@@ -143,14 +145,14 @@ jobs:
       # Save the HF cache AFTER the forecast downloaded the weights (same
       # restore-early/save-late split as the data cache).
       - name: Save HF model weights
-        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
+        if: ${{ success() && steps.guard.outputs.skip != 'true' && steps.update.outputs.status }}
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/huggingface
           key: hf-weights-${{ runner.os }}-v1
       # Score the published forecasts vs actuals + CUSUM drift -> JSON push
       - name: Monitoring (daily scores + status)
-        if: steps.guard.outputs.skip != 'true' && steps.update.result == 'success'
+        if: ${{ success() && steps.guard.outputs.skip != 'true' && steps.update.outputs.status }}
         run: uv run --locked python scripts/monitor.py
       - name: Push forecast JSON (skip if unchanged)
         run: |
