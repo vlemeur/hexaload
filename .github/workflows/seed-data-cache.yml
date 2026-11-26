@@ -11,7 +11,7 @@ name: seed-data-cache
 # data/cache are raw inputs for the asset-builder scripts whose outputs are
 # committed in src/hexaload/features/assets/ — the forecast workflow never
 # reads them):
-#   tar -czf /tmp/hexaload-data-cache.tar.gz -C data \
+#   tar --no-xattrs --exclude='._*' -czf /tmp/hexaload-data-cache.tar.gz -C data \
 #     cache/eco2mix-national-cons-def cache/eco2mix-national-tr cache/openmeteo-icon_eu
 #   gh release create data-cache-seed --title "data cache seed" \
 #     --notes "RTE eco2mix + Open-Meteo archive cache (open data only)" \
