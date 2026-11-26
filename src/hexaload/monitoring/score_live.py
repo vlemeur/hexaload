@@ -24,6 +24,17 @@ PARIS = ZoneInfo("Europe/Paris")
 WINDOW_H = 24 * 365
 
 
+def json_records(df: pd.DataFrame) -> list[dict]:
+    """DataFrame -> list of records with NaN/NaT as None (strict-JSON safe).
+
+    ``df.where(pd.notna(df), None)`` alone does NOT work: on a float64 column
+    None is coerced back to NaN, and ``json.dumps`` then emits a bare ``NaN``
+    — invalid strict JSON (breaks check-json and the site's JSON.parse).
+    The column must be object dtype first so None sticks.
+    """
+    return df.astype(object).where(pd.notna(df), None).to_dict(orient="records")
+
+
 def day_test_index(date_str: str) -> pd.DatetimeIndex:
     """The 24 h D-1 block of target day ``date_str`` (Paris midnight → UTC)."""
     target = pd.Timestamp(date_str).tz_localize(PARIS).tz_convert("UTC")

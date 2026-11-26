@@ -8,8 +8,26 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from hexaload.monitoring import CusumState, compute_status, cusum_update, daily_scores
+from hexaload.monitoring import (
+    CusumState,
+    compute_status,
+    cusum_update,
+    daily_scores,
+    json_records,
+)
 from hexaload.monitoring.cusum import cusum_series
+
+
+def test_json_records_nan_becomes_null_and_stays_strict_json():
+    # regression: df.where(notna, None) alone re-coerces None to NaN on
+    # float64 columns -> json.dumps emits bare NaN (invalid JSON, and it
+    # broke check-json on docs/data/monitoring/daily.json)
+    df = pd.DataFrame({"a": [1.0, np.nan], "b": ["x", "y"]})
+    records = json_records(df)
+    assert records[1]["a"] is None
+    s = json.dumps({"days": records})
+    assert "NaN" not in s
+    assert json.loads(s)["days"][1]["a"] is None
 
 
 def test_cusum_no_alarm_on_noise():
