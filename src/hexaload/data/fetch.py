@@ -347,9 +347,14 @@ def fetch_dataset(
 
 
 def read_cache(dataset: str, cache_dir: Path | str) -> pd.DataFrame:
-    """Read every cached parquet file of a dataset (offline replay)."""
+    """Read every cached parquet file of a dataset (offline replay).
+
+    Skips ``._*`` AppleDouble artifacts: a tar produced on macOS can carry
+    them (xattrs), they match ``*.parquet`` on extraction, and they are not
+    parquet files ("Parquet magic bytes not found" on read).
+    """
     cache = Path(cache_dir) / dataset
-    files = sorted(cache.glob("*.parquet"))
+    files = sorted(p for p in cache.glob("*.parquet") if not p.name.startswith("._"))
     if not files:
         raise FetchError(f"no cached parquet files for {dataset!r} in {cache}")
     logger.info("replaying %d cache files for %s", len(files), dataset)

@@ -120,6 +120,17 @@ def test_read_cache_empty_raises(tmp_path):
         read_cache("nope", tmp_path)
 
 
+def test_read_cache_skips_appledouble_artifacts(tmp_path):
+    # a tar made on macOS can carry ._* AppleDouble files next to the real
+    # parquets; they match *.parquet but are not parquet files
+    cache = tmp_path / "ds"
+    cache.mkdir()
+    pd.DataFrame({"x": [1]}).to_parquet(cache / "2023-01.parquet")
+    (cache / "._2023-01.parquet").write_bytes(b"appledouble junk")
+    df = read_cache("ds", tmp_path)
+    assert len(df) == 1 and df["x"].tolist() == [1]
+
+
 def test_429_waits_retry_after_delta(monkeypatch):
     client, sleeps = _client_with_responses(
         monkeypatch,
