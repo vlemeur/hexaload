@@ -37,6 +37,10 @@ ODRE_BASE = "https://odre.opendatasoft.com/api/explore/v2.1"
 DEFAULT_DATASET = "eco2mix-national-cons-def"
 PAGE_LIMIT = 100  # hard API cap on this ODRE instance: -1 <= limit <= 100
 MIN_REQUEST_INTERVAL_S = 1.0
+# A 429 whose rate-limit header announces a wait above this cap fails fast
+# instead of sleeping: a CI job must never block for hours on a shared-IP
+# quota (Open-Meteo has been seen announcing 80900s from GitHub runners).
+MAX_429_WAIT_S = 60.0
 
 # Open-Meteo Historical Forecast API (archived forecasts, replayed as-of date).
 OPENMETEO_BASE = "https://historical-forecast-api.open-meteo.com/v1"
@@ -65,16 +69,28 @@ class FetchError(RuntimeError):
 
 
 def _rate_limit_wait_s(response: requests.Response) -> float:
-    """Seconds to wait after a 429.
+    """Seconds to wait after a 429, as announced by the server (uncapped).
 
     Prefer the standard ``Retry-After`` delta; fall back to
-    ``X-RateLimit-Reset``, which on these APIs is an absolute epoch
-    timestamp, NOT a delta (misreading it sleeps for decades).
+    ``X-RateLimit-Reset``. Both headers are sometimes absolute epoch
+    timestamps instead of deltas (misreading one sleeps for decades), so
+    values above 1e9 are treated as epochs. The caller caps the result at
+    ``MAX_429_WAIT_S`` and fails fast beyond it.
     """
     retry_after = response.headers.get("Retry-After")
     if retry_after is not None:
-        return max(float(retry_after), 1.0)
-    reset = float(response.headers.get("X-RateLimit-Reset", "5"))
+        try:
+            value: float | None = float(retry_after)
+        except ValueError:  # HTTP-date form — unsupported, fall through
+            value = None
+        if value is not None:
+            if value > 1e9:  # defensive: absolute epoch, not a delta
+                return max(value - time.time(), 1.0)
+            return max(value, 1.0)
+    try:
+        reset = float(response.headers.get("X-RateLimit-Reset", "5"))
+    except ValueError:
+        reset = 5.0
     if reset > 1e9:  # absolute epoch timestamp
         return max(reset - time.time(), 1.0)
     return max(reset, 1.0)
@@ -120,7 +136,15 @@ class HttpClient:
             and self._rl_reset is not None
         ):
             wait = self._rl_reset - time.time() + 1.0
-            if wait > 0:
+            if wait > MAX_429_WAIT_S:
+                # never block for hours on a shared-IP quota; let the request
+                # go through and fail fast on the 429 instead
+                logger.warning(
+                    "rate limit low, reset in %.0fs (> %.0fs cap) — not waiting",
+                    wait,
+                    MAX_429_WAIT_S,
+                )
+            elif wait > 0:
                 logger.info(
                     "rate limit low (%d/%d left), waiting %.0fs",
                     self._rl_remaining,
@@ -160,6 +184,13 @@ class HttpClient:
             self._store_rate_limit_headers(response)
             if response.status_code == 429:
                 wait = _rate_limit_wait_s(response)
+                if wait > MAX_429_WAIT_S:
+                    # fail fast instead of sleeping for hours on a shared-IP
+                    # quota; the caller (e.g. the daily forecast cron) retries later
+                    raise FetchError(
+                        f"HTTP 429 on {url}: rate-limit wait {wait:.0f}s exceeds "
+                        f"the {MAX_429_WAIT_S:.0f}s cap — failing fast"
+                    )
                 logger.warning("429 on %s; waiting %.0fs", url, wait)
                 time.sleep(wait)
             if response.status_code >= 400:

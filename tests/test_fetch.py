@@ -172,6 +172,54 @@ def test_429_rate_limit_reset_is_epoch_not_delta(monkeypatch):
     assert max(sleeps) < 5
 
 
+def test_429_fail_fast_when_wait_exceeds_cap(monkeypatch):
+    # Open-Meteo from a shared CI egress IP has announced Retry-After: 80900 —
+    # sleeping that would kill the job; we must fail fast instead.
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [_fake_response({"error": True}, status=429, headers={"Retry-After": "80900"})],
+    )
+    with pytest.raises(FetchError, match="failing fast"):
+        client.get_json("x", {})
+    assert all(s <= fetch.MAX_429_WAIT_S for s in sleeps)
+
+
+def test_429_fail_fast_on_far_future_epoch_reset(monkeypatch):
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"error": True},
+                status=429,
+                headers={"X-RateLimit-Reset": str(time.time() + 80900)},
+            )
+        ],
+    )
+    with pytest.raises(FetchError, match="failing fast"):
+        client.get_json("x", {})
+    assert all(s <= fetch.MAX_429_WAIT_S for s in sleeps)
+
+
+def test_throttle_never_sleeps_beyond_cap(monkeypatch):
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"ok": 1},
+                headers={
+                    "X-RateLimit-Remaining": "1",
+                    "X-RateLimit-Limit": "100",
+                    "X-RateLimit-Reset": str(time.time() + 80900),
+                },
+            ),
+            _fake_response({"ok": 2}),
+        ],
+    )
+    assert client.get_json("a", {}) == {"ok": 1}
+    assert client.get_json("b", {}) == {"ok": 2}
+    assert all(s <= fetch.MAX_429_WAIT_S for s in sleeps)
+
+
 def test_fetch_dataset_progress_bar_smoke(tmp_path, monkeypatch):
     pytest.importorskip("tqdm")
     page = {"total_count": 1, "results": [{"x": 1}]}
