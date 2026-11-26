@@ -16,6 +16,7 @@ from .seq import RNNFeatures, TCNFeatures
 from .stats import SktimeAutoETS, SktimeTheta
 from .torch_base import TorchForecaster
 from .tsfm import ChronosBoltTSFM, TimestralTSFM, TSFMForecaster
+from .tsfm_lora import TimestralLoRA
 
 __all__ = [
     "DEFAULT_QUANTILES",
@@ -34,6 +35,7 @@ __all__ = [
     "SktimeTheta",
     "TCNFeatures",
     "ChronosBoltTSFM",
+    "TimestralLoRA",
     "TimestralTSFM",
     "TSFMForecaster",
     "TorchForecaster",
