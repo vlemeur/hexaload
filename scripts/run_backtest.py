@@ -17,6 +17,12 @@ import sys
 from hexaload.backtest.run import BacktestConfig, run
 from hexaload.backtest.walkforward import DEFAULT_END, DEFAULT_HORIZON, DEFAULT_START
 from hexaload.progress import setup_logging
+from hexaload.tuning.spaces import (
+    FEATURE_MODELS,
+    TSFM_MODELS,
+    UNIVARIATE_MODELS,
+    VARIANT_MODELS,
+)
 
 
 def main() -> int:
@@ -45,6 +51,11 @@ def main() -> int:
         help="comma-separated model names to skip (e.g. 'sktime_autoarima')",
     )
     parser.add_argument(
+        "--only",
+        default="",
+        help="comma-separated model names to run (default: all; the rest are skipped)",
+    )
+    parser.add_argument(
         "--drop-features",
         default="",
         help="comma-separated feature columns to drop for feature models "
@@ -62,6 +73,19 @@ def main() -> int:
         help="keep third-party/data logs (default: quiet, bar stays readable)",
     )
     args = parser.parse_args()
+    if args.only:
+        wanted = {s.strip() for s in args.only.split(",") if s.strip()}
+        all_names = {
+            "naive",
+            "seasonal_naive_24",
+            "seasonal_naive_168",
+            "rte_prevision_j1",
+            *FEATURE_MODELS,
+            *VARIANT_MODELS,
+            *UNIVARIATE_MODELS,
+            *TSFM_MODELS,
+        }
+        args.skip = ",".join(sorted(all_names - wanted))
     setup_logging(verbose=args.verbose)
     cfg = BacktestConfig(
         start=args.start,

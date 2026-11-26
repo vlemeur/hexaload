@@ -23,6 +23,7 @@ from hexaload.models import (
     SktimeAutoETS,
     SktimeTheta,
     TCNFeatures,
+    TimestralLoRA,
     TimestralTSFM,
     XGBFeatures,
 )
@@ -52,7 +53,7 @@ FEATURE_MODELS = (
     "patchtst_features",
 )
 UNIVARIATE_MODELS = ("sktime_autoets", "sktime_theta", "nhits")
-TSFM_MODELS = ("timestral_209m", "chronos_bolt")
+TSFM_MODELS = ("timestral_209m", "timestral_lora_209m", "chronos_bolt")
 # bonus bricks (v2): extra backtest rows built from the feature models above.
 # They need the feature table; --drop-features applies to them too (norte run).
 VARIANT_MODELS = (
@@ -152,6 +153,9 @@ def build_model(model: str, params: dict[str, Any] | None = None) -> Any:
         return SktimeTheta(**p)
     if model == "timestral_209m":
         return TimestralTSFM("mistralai/Timestral-209M", **p)
+    if model == "timestral_lora_209m":
+        # not in TUNABLE: constructor defaults (lora_r/lr/n_steps/...), like baselines
+        return TimestralLoRA("mistralai/Timestral-209M", **p)
     if model == "chronos_bolt":
         return ChronosBoltTSFM("amazon/chronos-bolt-base", **p)
     raise ValueError(f"unknown model {model!r}")
