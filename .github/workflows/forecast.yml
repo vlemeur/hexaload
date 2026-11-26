@@ -15,6 +15,12 @@ name: forecast
     - cron: "50 15 * * *"  # 17:50 CEST re-run to pick up RTE's prevision_j1
     - cron: "50 16 * * *"  # 17:50 CET
   workflow_dispatch:
+    inputs:
+      max_429_wait:
+        description: "Max seconds to sleep on a 429 before failing fast — raise it (e.g. 3600) for the manual cache-seeding run so it can wait out Open-Meteo's hourly limit"
+        required: false
+        default: "60"
+        type: string
 
 permissions:
   contents: write  # push the forecast JSON to main
@@ -33,14 +39,17 @@ jobs:
           enable-cache: true
       - name: Sync locked environment
         run: uv sync --locked
-      # Restored BEFORE the forecast: Timestral/Chronos weights (~GBs) would
-      # otherwise be re-downloaded on every run (the old step sat after the
-      # forecast and had no restore-keys, so it never restored anything).
+      # Restore BEFORE the forecast, save AFTER it (see the save step below):
+      # a single actions/cache step saves the path at the end of its own step,
+      # i.e. before the weights are downloaded — the cache would never fill.
+      # Stable key (not keyed on uv.lock): the weights depend on the model
+      # names in the code, not on the dependency lock.
       - name: Restore HF model weights
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: hf-cache
         with:
           path: ~/.cache/huggingface
-          key: hf-weights-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          key: hf-weights-${{ runner.os }}-v1
           restore-keys: hf-weights-${{ runner.os }}-
       - name: Guard — only run at 11:50 / 17:50 Paris time (manual runs always pass)
         id: guard
@@ -72,7 +81,8 @@ jobs:
         id: month
         run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
       - name: Restore data cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: data-cache
         with:
           path: data/cache
           key: hexaload-data-${{ runner.os }}-${{ steps.month.outputs.month }}
@@ -83,11 +93,30 @@ jobs:
       # the restored cache so the daily forecast still goes out.
       - name: Update data cache
         if: steps.guard.outputs.skip != 'true'
+        env:
+          # daily crons fail fast on 429 (>60s); a manual seeding run can pass
+          # a higher value via the max_429_wait input to wait out the limit
+          HEXALOAD_MAX_429_WAIT_S: ${{ inputs.max_429_wait || '60' }}
         run: |
-          uv run --locked python scripts/fetch_data.py --source all || {
-            echo "WARN: fetch failed — replaying the restored cache offline"
+          if uv run --locked python scripts/fetch_data.py --source all; then
+            exit 0
+          fi
+          if [ "${{ steps.data-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "WARN: fetch failed but a data cache was restored — replaying it offline"
             uv run --locked python scripts/fetch_data.py --source all --offline
-          }
+          else
+            echo "ERROR: fetch failed and no data cache was restored — failing so the run can be retried"
+            exit 1
+          fi
+      # Save the data cache AFTER the fetch (a single actions/cache step would
+      # save the path before the fetch populates it). Same key as the restore;
+      # the save is skipped when the key already exists (entries are immutable).
+      - name: Save data cache
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache
+          key: hexaload-data-${{ runner.os }}-${{ steps.month.outputs.month }}
       - name: Rebuild features
         if: steps.guard.outputs.skip != 'true'
         run: uv run --locked python scripts/build_features.py
@@ -107,6 +136,14 @@ jobs:
           fi
         env:
           HF_HUB_OFFLINE: "0"
+      # Save the HF cache AFTER the forecast downloaded the weights (same
+      # restore-early/save-late split as the data cache).
+      - name: Save HF model weights
+        if: steps.guard.outputs.skip != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-weights-${{ runner.os }}-v1
       # Score the published forecasts vs actuals + CUSUM drift -> JSON push
       - name: Monitoring (daily scores + status)
         if: steps.guard.outputs.skip != 'true'

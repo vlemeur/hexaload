@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
@@ -40,7 +41,9 @@ MIN_REQUEST_INTERVAL_S = 1.0
 # A 429 whose rate-limit header announces a wait above this cap fails fast
 # instead of sleeping: a CI job must never block for hours on a shared-IP
 # quota (Open-Meteo has been seen announcing 80900s from GitHub runners).
-MAX_429_WAIT_S = 60.0
+# HEXALOAD_MAX_429_WAIT_S overrides it (e.g. forecast.yml's manual cache-seeding
+# run waits out Open-Meteo's hourly window instead of failing fast).
+MAX_429_WAIT_S = float(os.environ.get("HEXALOAD_MAX_429_WAIT_S", "60"))
 
 # Open-Meteo Historical Forecast API (archived forecasts, replayed as-of date).
 OPENMETEO_BASE = "https://historical-forecast-api.open-meteo.com/v1"
