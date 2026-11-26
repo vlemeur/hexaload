@@ -1,0 +1,58 @@
+name: seed-data-cache
+
+# One-off / disaster recovery: seed the Actions data cache from a release asset.
+#
+# GitHub-hosted runners share egress IPs, so Open-Meteo's DAILY quota on the
+# historical-forecast API is usually already exhausted by other tenants when a
+# cold runner starts (429 with a Retry-After of ~53566s = seconds until 00:00
+# UTC). A runner therefore cannot fetch the 47-month weather archive by itself.
+# Seed once from a machine with a warm cache and a non-shared IP. Only the
+# three API fetch caches are needed (grid-weights/ and school-vacations/ under
+# data/cache are raw inputs for the asset-builder scripts whose outputs are
+# committed in src/hexaload/features/assets/ — the forecast workflow never
+# reads them):
+#   tar -czf /tmp/hexaload-data-cache.tar.gz -C data \
+#     cache/eco2mix-national-cons-def cache/eco2mix-national-tr cache/openmeteo-icon_eu
+#   gh release create data-cache-seed --title "data cache seed" \
+#     --notes "RTE eco2mix + Open-Meteo archive cache (open data only)" \
+#     /tmp/hexaload-data-cache.tar.gz
+#   gh workflow run seed-data-cache --ref main
+# The asset must be named hexaload-data-cache.tar.gz and contain cache/... so
+# that `tar -xzf ... -C data` produces data/cache. All of it is public open data
+# (RTE eco2mix records, Open-Meteo forecasts) — no personal data, no secrets.
+# The release asset is public (repo is public) but the Actions cache entry
+# itself is private to the repo: only this repo's workflows can restore it.
+# After this run, forecast.yml
+# restores the cache (restore-keys hexaload-data-<os>-) and only fetches the
+# current month. The release can be deleted once the Actions cache is seeded.
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seed-data-cache
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      # Same monthly key scheme as forecast.yml so its restore finds this entry.
+      - name: Cache key — one data cache per UTC month
+        id: month
+        run: echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+      - name: Download seed asset and unpack into data/cache
+        run: |
+          curl -sfL -o seed.tar.gz \
+            "https://github.com/${{ github.repository }}/releases/download/data-cache-seed/hexaload-data-cache.tar.gz"
+          mkdir -p data
+          tar -xzf seed.tar.gz -C data
+          du -sh data/cache && ls data/cache
+      - name: Save data cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/cache
+          key: hexaload-data-${{ runner.os }}-${{ steps.month.outputs.month }}

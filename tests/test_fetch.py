@@ -200,6 +200,23 @@ def test_429_fail_fast_on_far_future_epoch_reset(monkeypatch):
     assert all(s <= fetch.MAX_429_WAIT_S for s in sleeps)
 
 
+def test_429_sleeps_and_retries_when_wait_under_raised_cap(monkeypatch):
+    # seeding runs raise the cap (HEXALOAD_MAX_429_WAIT_S) to wait out e.g.
+    # Open-Meteo's hourly window: a 3000s wait must then be slept, not failed
+    monkeypatch.setattr(fetch, "MAX_429_WAIT_S", 5000.0)
+    client, sleeps = _client_with_responses(
+        monkeypatch,
+        [
+            _fake_response(
+                {"error": True}, status=429, headers={"Retry-After": "3000"}
+            ),
+            _fake_response({"ok": True}),
+        ],
+    )
+    assert client.get_json("x", {}) == {"ok": True}
+    assert any(s >= 3000 for s in sleeps)
+
+
 def test_throttle_never_sleeps_beyond_cap(monkeypatch):
     client, sleeps = _client_with_responses(
         monkeypatch,
