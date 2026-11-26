@@ -1,4 +1,4 @@
-"""TimestralLoRA: LoRA injection + per-fold fine-tune — CPU-only, fake pipe.
+"""TimestralLoRA: LoRA injection, per-fold fine-tune, adapter serving — CPU-only.
 
 The pretrained pipeline is faked (no weight download, no GPU probe); the fake
 forecast is differentiable through the model so gradients reach the adapters.
@@ -13,7 +13,13 @@ import torch
 from torch import nn
 
 from hexaload.models import TimestralLoRA, tsfm_lora
-from hexaload.models.tsfm_lora import LoRALinear, inject_lora
+from hexaload.models.tsfm_lora import (
+    LoRALinear,
+    finetune_lora,
+    inject_lora,
+    lora_state_dict,
+    save_adapter,
+)
 
 LEVELS = (0.1, 0.5, 0.9)
 
@@ -89,12 +95,6 @@ def tiny(**kw) -> TimestralLoRA:
     return TimestralLoRA(**kw)
 
 
-def lora_state(model: nn.Module) -> dict[str, torch.Tensor]:
-    return {
-        k: v.detach().clone() for k, v in model.state_dict().items() if "lora_" in k
-    }
-
-
 def test_inject_lora_freezes_base() -> None:
     m = FakeModel()
     base_before = m.head.weight.detach().clone()
@@ -125,15 +125,93 @@ def test_adapters_reset_each_fold(patched: FakePipe) -> None:
     m1 = tiny().fit(y, X)
     head = patched.model.head
     assert isinstance(head, LoRALinear)
-    s1 = lora_state(patched.model)
+    s1 = lora_state_dict(patched.model)
     base_w = head.base.weight.detach().clone()
     # simulate a previous fold's adapters: perturb, then a new instance (new fold)
     with torch.no_grad():
         head.lora_B.add_(1.0)
     m2 = tiny().fit(y, X)  # same process, same cached pipe -> reset from init
-    s2 = lora_state(patched.model)
+    s2 = lora_state_dict(patched.model)
     assert set(s1) == set(s2)
     for k in s1:
         assert torch.equal(s1[k], s2[k]), k  # deterministic retrain from the init
     assert torch.equal(head.base.weight, base_w)  # base never trains
     assert m2 is not m1
+
+
+def _fresh_injected_pipe(r: int = 2) -> FakePipe:
+    torch.manual_seed(0)
+    pipe = FakePipe()
+    inject_lora(pipe.model, r, 4.0)
+    return pipe
+
+
+def test_finetune_lora_val_tail_and_determinism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tsfm_lora, "_forecast_grad", fake_forecast_grad)
+    X, y = make_xy()
+    h1 = finetune_lora(
+        _fresh_injected_pipe(),
+        y,
+        X,
+        lr=1e-3,
+        n_steps=6,
+        batch=2,
+        train_context_hours=32,
+        horizon=4,
+        seed=0,
+        val_tail_hours=48,
+        ckpt_every=2,
+    )
+    assert len(h1["losses"]) == 6
+    assert len(h1["val"]) >= 2  # ckpt_every=2 over 6 steps + final step
+    assert 0 <= h1["best_step"] < 6
+
+    h2 = finetune_lora(
+        _fresh_injected_pipe(),
+        y,
+        X,
+        lr=1e-3,
+        n_steps=6,
+        batch=2,
+        train_context_hours=32,
+        horizon=4,
+        seed=0,
+        val_tail_hours=48,
+        ckpt_every=2,
+    )
+    assert h1["losses"] == h2["losses"]  # same seed -> same run
+
+
+def test_adapter_load_mode_skips_training(
+    patched: FakePipe, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # reference adapter: injected fake model with known lora_B
+    ref = _fresh_injected_pipe()
+    ref_head = ref.model.head
+    assert isinstance(ref_head, LoRALinear)
+    with torch.no_grad():
+        ref_head.lora_B.fill_(0.5)
+    adapter_file = tmp_path / "adapter.safetensors"
+    save_adapter(ref.model, adapter_file)
+
+    def _boom(*a, **k):
+        raise RuntimeError("training must be skipped in adapter mode")
+
+    monkeypatch.setattr(tsfm_lora, "finetune_lora", _boom)
+    m = TimestralLoRA(
+        adapter_path=str(adapter_file),
+        device="cpu",
+        lora_r=2,
+        lora_alpha=4.0,
+        context_hours=48,
+    )
+    X, y = make_xy()
+    m.fit(y, X)  # must not call finetune_lora
+    head = patched.model.head
+    assert isinstance(head, LoRALinear)
+    assert torch.allclose(head.lora_B, torch.full_like(head.lora_B, 0.5))
+    # predict still works through the pipe with the loaded adapter
+    pred = m.predict(y.index[-8:], X.iloc[-8:])
+    assert len(pred) == 8
