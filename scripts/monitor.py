@@ -20,10 +20,8 @@ import json
 import logging
 from pathlib import Path
 
-import pandas as pd
-
 from hexaload.backtest.load import load_targets
-from hexaload.monitoring import compute_status, daily_scores
+from hexaload.monitoring import compute_status, daily_scores, json_records
 from hexaload.progress import setup_logging
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,12 +47,9 @@ def main() -> int:
         daily_path = args.out / "daily.json"
         daily_path.write_text(json.dumps({"days": []}))
     else:
-        # JSON-friendly: NaN -> None
-        clean = df.where(pd.notna(df), None)
+        # NaN -> None via object dtype: a bare NaN would be invalid strict JSON
         daily_path = args.out / "daily.json"
-        daily_path.write_text(
-            json.dumps({"days": clean.to_dict(orient="records")}, default=str)
-        )
+        daily_path.write_text(json.dumps({"days": json_records(df)}, default=str))
         logger.info("scored %d days -> %s", len(df), daily_path)
 
     # status: latest published forecast + is RTE's D-1 available for it?
