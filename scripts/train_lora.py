@@ -14,6 +14,12 @@ code to pin the adapter version.
 On an Apple Silicon Mac the pipe runs on MPS (float64 scaler casts are
 downcast to float32 by hexaload.models._mps_shim). Needs HF_TOKEN only with
 --push. Never run this in the daily forecast Action: it is a rare, heavy job.
+
+Memory: training activations scale with batch x (1 + n_exo_rows) x context
+patches. On a ~20 GiB MPS pool the proven fit is batch=2 with
+train-context-hours=720 (the backtest row's config); batch=4 or 90-day
+contexts OOM. More steps over more years (stratified sampling) matter far
+more than a longer context.
 """
 
 from __future__ import annotations
@@ -65,11 +71,21 @@ def main() -> int:
     p.add_argument("--repo", default="mistralai/Timestral-209M")
     p.add_argument("--device", default=None, help="cpu|cuda|mps (default: auto)")
     p.add_argument("--n-steps", type=int, default=3000)
-    p.add_argument("--batch", type=int, default=4)
+    p.add_argument(
+        "--batch",
+        type=int,
+        default=2,
+        help="2 fits a ~20 GiB MPS pool with 37 exo rows; 4 OOMs",
+    )
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=float, default=32.0)
-    p.add_argument("--train-context-hours", type=int, default=24 * 90)
+    p.add_argument(
+        "--train-context-hours",
+        type=int,
+        default=24 * 30,
+        help="720 h is the proven MPS fit; 90 d OOMs at batch 2+ on ~20 GiB",
+    )
     p.add_argument("--horizon", type=int, default=24)
     p.add_argument("--val-tail-hours", type=int, default=24 * 30)
     p.add_argument("--ckpt-every", type=int, default=200)
