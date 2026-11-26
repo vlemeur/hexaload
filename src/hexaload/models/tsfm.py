@@ -185,7 +185,12 @@ class TimestralTSFM(TSFMForecaster):
 
         device = self._device
         if device == "mps":
-            device = "cpu"  # Timestral normalizes in float64; MPS has no float64
+            # MPS has no float64 kernels and Timestral's scaler casts to float64
+            # on the model's device: downcast those casts to float32 on MPS only
+            # (weights are float32; CPU path stays bit-exact, validated vs CPU).
+            from ._mps_shim import apply_mps_f64_shim
+
+            apply_mps_f64_shim()
         key = (self._backend, self._repo_id, device)
         if key in _PIPE_CACHE:  # load the weights once per process, not per fold
             self._pipe = _PIPE_CACHE[key]
