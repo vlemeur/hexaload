@@ -28,8 +28,10 @@ from hexaload.data.fetch import fetch_openmeteo_live_national
 from hexaload.features import apply_as_of
 from hexaload.metrics import DEFAULT_SP, crps, mase, sample_quantiles
 from hexaload.models import DEFAULT_QUANTILES
+from hexaload.models.tsfm_lora import adapter_pointer_kwargs
 from hexaload.tuning.params import load_best_params
 from hexaload.tuning.spaces import (
+    TSFM_MODELS,
     VARIANT_MODELS,
     build_model,
     build_variant,
@@ -38,7 +40,12 @@ from hexaload.tuning.spaces import (
 ROOT = Path(__file__).resolve().parent.parent
 N_SAMPLES = 100  # empirical CRPS ensemble size (same as backtest/run.py)
 OUT = ROOT / "docs/data/accuracy.json"
-MODELS = ("timestral_209m", "hgb_features_ewma_mondrian", "ridge_features")
+# timestral_lora_209m replays from the published HF adapter, only once the git
+# pointer is committed (same rule as scripts/forecast.py DEFAULT_MODELS)
+LORA_POINTER = ROOT / "docs/data/lora_adapter.json"
+MODELS = ("timestral_209m", "hgb_features_ewma_mondrian", "ridge_features") + (
+    ("timestral_lora_209m",) if LORA_POINTER.exists() else ()
+)
 N_DAYS = 7
 WINDOW_H = 24 * 365
 
@@ -102,12 +109,15 @@ def main() -> int:
         }
         y_test = y.reindex(test)
         for name in MODELS:
+            p = dict(params.get(name, {}))
+            if name == "timestral_lora_209m":
+                p.update(adapter_pointer_kwargs(LORA_POINTER))
             m = (
                 build_variant(name, params)
                 if name in VARIANT_MODELS
-                else build_model(name, params.get(name, {}))
+                else build_model(name, p)
             )
-            if name in ("timestral_209m", "chronos_bolt"):
+            if name in TSFM_MODELS:
                 m.fit(y_train, X_train[exo])
                 pred = m.predict(block, X_future[exo]).reindex(test)
                 q = m.predict_quantiles(

@@ -31,6 +31,7 @@ from hexaload.backtest.recursive import (
 )
 from hexaload.features import apply_as_of
 from hexaload.models import DEFAULT_QUANTILES
+from hexaload.models.tsfm_lora import ADAPTER_POINTER_PATH, adapter_pointer_kwargs
 from hexaload.progress import setup_logging
 from hexaload.tuning.params import load_best_params
 from hexaload.tuning.spaces import (
@@ -46,7 +47,13 @@ OUT_DIR = Path("docs/data/forecasts")
 FREEZE_HOUR = FREEZE_HOUR_PARIS  # Paris time, day before the target
 WINDOW_H = 24 * 365
 
-DEFAULT_MODELS = ("timestral_209m", "hgb_features_ewma_mondrian")
+# timestral_lora_209m is served from the published HF adapter and joins the
+# daily forecast only once the git pointer docs/data/lora_adapter.json is
+# committed (train_lora.py --push): before that, per-fit LoRA training on a
+# CPU runner would take hours and blow up the daily Action.
+DEFAULT_MODELS = ("timestral_209m", "hgb_features_ewma_mondrian") + (
+    ("timestral_lora_209m",) if ADAPTER_POINTER_PATH.exists() else ()
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,10 +217,15 @@ def main() -> int:
         "rte_d1": [None if pd.isna(v) else float(v) for v in ref.reindex(test_d1)],
     }
     for name in [m.strip() for m in args.models.split(",") if m.strip()]:
+        p = dict(params.get(name, {}))
+        if name == "timestral_lora_209m":
+            # serving mode: load the published adapter (no training) when the
+            # pointer exists; without it, per-fit training as in the backtest
+            p.update(adapter_pointer_kwargs())
         m = (
             build_variant(name, params)
             if name in VARIANT_MODELS
-            else build_model(name, params.get(name, {}))
+            else build_model(name, p)
         )
         if name in TSFM_MODELS:
             m.fit(y_train, X_train[exo] if X_train is not None else None)

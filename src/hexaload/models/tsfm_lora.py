@@ -25,7 +25,7 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -46,6 +46,30 @@ _LORA_INIT: dict[tuple, dict[str, torch.Tensor]] = {}
 
 # HF repo hosting the published production adapter (set once it exists)
 DEFAULT_ADAPTER_REPO: str | None = None
+
+# git pointer written by scripts/train_lora.py --push; read by the serving
+# entry points (scripts/forecast.py, scripts/site_curves.py)
+ADAPTER_POINTER_PATH = Path("docs/data/lora_adapter.json")
+
+
+def adapter_pointer_kwargs(path: str | Path = ADAPTER_POINTER_PATH) -> dict[str, Any]:
+    """Serving kwargs for :class:`TimestralLoRA` from the committed git pointer.
+
+    Returns ``{"adapter_repo_id", "adapter_revision"}`` once an adapter has
+    been pushed (``train_lora.py --push`` wrote the pointer), else ``{}`` —
+    callers then keep the per-fit training behaviour. Pure JSON read, no
+    network; the download happens later in ``_load_published_adapter``.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    ptr = json.loads(p.read_text())
+    kw: dict[str, Any] = {}
+    if ptr.get("adapter_repo_id"):
+        kw["adapter_repo_id"] = str(ptr["adapter_repo_id"])
+    if ptr.get("adapter_revision"):
+        kw["adapter_revision"] = str(ptr["adapter_revision"])
+    return kw
 
 
 class LoRALinear(nn.Module):

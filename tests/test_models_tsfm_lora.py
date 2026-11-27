@@ -247,3 +247,34 @@ def test_adapter_sha256_mismatch_rejected(
     X, y = make_xy()
     with pytest.raises(ValueError, match="sha256 mismatch"):
         m.fit(y, X)
+
+
+def test_adapter_pointer_kwargs(tmp_path) -> None:
+    import json
+
+    from hexaload.models.tsfm_lora import adapter_pointer_kwargs
+
+    # no pointer committed yet -> {} (serving falls back to per-fit training)
+    assert adapter_pointer_kwargs(tmp_path / "lora_adapter.json") == {}
+
+    ptr = tmp_path / "lora_adapter.json"
+    ptr.write_text(
+        json.dumps(
+            {
+                "adapter_repo_id": "you/timestral-209m-lora-fr-load",
+                "adapter_revision": "abc123",
+                "base_repo": "mistralai/Timestral-209M",
+                "base_revision": "def456",
+                "sha256": "0" * 64,
+            }
+        )
+    )
+    # only the serving kwargs are forwarded (sha256/base_* stay in the file)
+    assert adapter_pointer_kwargs(ptr) == {
+        "adapter_repo_id": "you/timestral-209m-lora-fr-load",
+        "adapter_revision": "abc123",
+    }
+    # and they plug straight into the constructor
+    m = TimestralLoRA(device="cpu", **adapter_pointer_kwargs(ptr))
+    assert m.adapter_repo_id == "you/timestral-209m-lora-fr-load"
+    assert m.adapter_revision == "abc123"
