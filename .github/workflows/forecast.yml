@@ -7,7 +7,11 @@ name: forecast
 # time as the reference).
 #
 # 11:50 Paris = 10:50 UTC in summer (CEST) and 11:50 UTC in winter (CET), so
-# the cron fires twice and a local-time guard keeps only the right run.
+# the cron fires twice. GitHub delivers scheduled runs with HOURS of delay on
+# public repos, so the local-time guard uses WIDE windows (10:30-14:00 /
+# 17:00-20:00 Paris) and the forecast step always passes an explicit --date
+# (tomorrow Paris): a delayed cron still forecasts the right day J, with
+# as_of = J-1 12:00 Paris already in the past — no leakage, idempotent by date.
 "on":
   schedule:
     - cron: "50 10 * * *"  # 11:50 CEST (summer)
@@ -51,7 +55,7 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-weights-${{ runner.os }}-v1
           restore-keys: hf-weights-${{ runner.os }}-
-      - name: Guard — only run at 11:50 / 17:50 Paris time (manual runs always pass)
+      - name: Guard — wide Paris windows 10:30-14:00 / 17:00-20:00 (manual runs always pass)
         id: guard
         run: |
           MODE=morning
@@ -60,12 +64,15 @@ jobs:
           else
             H=$(date -d "TZ=\"Europe/Paris\" now" +%H%M 2>/dev/null || TZ=Europe/Paris date +%H%M)
             echo "Paris time: $H"
-            if [ "$H" -ge 1145 ] && [ "$H" -le 1200 ]; then
+            # wide windows: GitHub delays scheduled runs by hours on public
+            # repos; the forecast step passes an explicit --date (tomorrow
+            # Paris), so a delayed run still targets the right day J
+            if [ "$H" -ge 1030 ] && [ "$H" -le 1400 ]; then
               MODE=morning
-            elif [ "$H" -ge 1745 ] && [ "$H" -le 1800 ]; then
+            elif [ "$H" -ge 1700 ] && [ "$H" -le 2000 ]; then
               MODE=evening
             else
-              echo "outside the 11:50 / 17:50 Paris windows — skipping (idempotent)"
+              echo "outside the 10:30-14:00 / 17:00-20:00 Paris windows — skipping (idempotent)"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -133,12 +140,16 @@ jobs:
       - name: Forecast tomorrow (freeze J-1 12:00, refreshed 17:00 Paris)
         if: ${{ success() && steps.guard.outputs.skip != 'true' && steps.update.outputs.status }}
         run: |
+          # explicit target day (tomorrow Paris): a cron delayed by GitHub
+          # still forecasts the right J, and as_of = J-1 12:00/17:00 Paris is
+          # then in the past — no leakage. Morning stays idempotent (no --force).
+          J=$(date -d "TZ=\"Europe/Paris\" tomorrow" +%F)
           if [ "$MODE" = "evening" ]; then
-            J=$(date -d "TZ=\"Europe/Paris\" tomorrow" +%F)
             echo "evening re-run: target $J, freeze 17:00 Paris"
             uv run --locked python scripts/forecast.py --force --date "$J" --freeze-hour 17
           else
-            uv run --locked python scripts/forecast.py
+            echo "morning run: target $J, freeze 12:00 Paris on J-1"
+            uv run --locked python scripts/forecast.py --date "$J"
           fi
         env:
           HF_HUB_OFFLINE: "0"
