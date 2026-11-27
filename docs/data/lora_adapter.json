@@ -1,0 +1,7 @@
+{
+  "adapter_repo_id": "vlemeur/timestral-209m-lora-fr-load",
+  "adapter_revision": "20d26f469f1966b6bac97747b4dad072d4d58dd9",
+  "base_repo": "mistralai/Timestral-209M",
+  "base_revision": "9874d252ab0aae16f7f7c999f98f98d6ad7d8365",
+  "sha256": "46a9ade677f516a1dc23a5a119398425bd7d525eadac23b34085270b7bf0371d"
+}
