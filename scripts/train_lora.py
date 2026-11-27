@@ -10,6 +10,9 @@ code to pin the adapter version.
     uv run python scripts/train_lora.py --n-steps 3000 --out data/lora/run1
     uv run python scripts/train_lora.py --n-steps 3000 --push \
         --hf-repo you/timestral-209m-lora-fr-load
+    # push an existing run without retraining (sha256 checked):
+    uv run python scripts/train_lora.py --push-only --out data/lora/run1 \
+        --push --hf-repo you/timestral-209m-lora-fr-load
 
 On an Apple Silicon Mac the pipe runs on MPS (float64 scaler casts are
 downcast to float32 by hexaload.models._mps_shim). Needs HF_TOKEN only with
@@ -66,6 +69,62 @@ repo), which caps commercial use for organisations above the revenue threshold.
 """
 
 
+def _push_to_hf(args, out: Path, cfg: dict, sha: str) -> None:
+    """Upload adapter + config + README to the HF repo; write the git pointer."""
+    if not args.hf_repo:
+        raise SystemExit("--push/--push-only needs --hf-repo")
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    api.create_repo(args.hf_repo, exist_ok=True, private=args.hf_private)
+    base_repo = cfg.get("base_repo", args.repo)
+    base_rev = api.model_info(base_repo).sha
+    hp = cfg["hyperparams"]
+    readme = out / "README.md"
+    readme.write_text(
+        README_TEMPLATE.format(
+            hf_repo=args.hf_repo,
+            r=hp["lora_r"],
+            alpha=hp["lora_alpha"],
+            base_rev=base_rev,
+            sha=sha,
+            n_hours=cfg["train"]["n_hours"],
+            freeze=cfg["train"]["freeze"],
+            seed=hp["seed"],
+            val_h=cfg["val"]["tail_hours"],
+            best_step=cfg["val"]["best_step"],
+            best_val=cfg["val"]["best_val"],
+            n_steps=hp["n_steps"],
+            lr=hp["lr"],
+            batch=hp["batch"],
+            tch=hp["train_context_hours"],
+            h=hp["horizon"],
+        )
+    )
+    for f in (
+        out / cfg.get("adapter_file", "adapter.safetensors"),
+        out / "adapter_config.json",
+        readme,
+    ):
+        api.upload_file(
+            path_or_fileobj=str(f), path_in_repo=f.name, repo_id=args.hf_repo
+        )
+    rev = api.repo_info(args.hf_repo).sha
+    pointer = {
+        "adapter_repo_id": args.hf_repo,
+        "adapter_revision": rev,
+        "base_repo": base_repo,
+        "base_revision": base_rev,
+        "sha256": sha,
+    }
+    Path("docs/data/lora_adapter.json").write_text(json.dumps(pointer, indent=2) + "\n")
+    logger.info(
+        "pushed to hf.co/%s @ %s + git pointer docs/data/lora_adapter.json",
+        args.hf_repo,
+        rev,
+    )
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--repo", default="mistralai/Timestral-209M")
@@ -93,11 +152,28 @@ def main() -> int:
     p.add_argument("--freeze", default=None, help="as-of UTC; default = data max")
     p.add_argument("--out", default="data/lora/timestral-209m-lora")
     p.add_argument("--push", action="store_true", help="upload to --hf-repo")
+    p.add_argument(
+        "--push-only",
+        action="store_true",
+        help="skip training: verify sha256 and push the existing --out dir",
+    )
     p.add_argument("--hf-repo", default=None)
     p.add_argument("--hf-private", action="store_true")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
     setup_logging(verbose=args.verbose)
+    out = Path(args.out)
+
+    if args.push_only:
+        cfg = json.loads((out / "adapter_config.json").read_text())
+        adapter = out / cfg.get("adapter_file", "adapter.safetensors")
+        sha = hashlib.sha256(adapter.read_bytes()).hexdigest()
+        if sha != cfg["sha256"]:
+            raise SystemExit(
+                "adapter file does not match the sha256 in adapter_config.json"
+            )
+        _push_to_hf(args, out, cfg, sha)
+        return 0
 
     y, _ref, _wx, _src = load_targets()
     X, manifest = load_features()
@@ -140,7 +216,6 @@ def main() -> int:
             progress=prog,
         )
 
-    out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     adapter = out / "adapter.safetensors"
     save_adapter(pipe.model, adapter)
@@ -179,56 +254,8 @@ def main() -> int:
     (out / "adapter_config.json").write_text(json.dumps(cfg, indent=2) + "\n")
     logger.info("wrote %s (sha256 %s…) + adapter_config.json", adapter, sha[:12])
 
-    rev = None
     if args.push:
-        if not args.hf_repo:
-            p.error("--push needs --hf-repo")
-        from huggingface_hub import HfApi
-
-        api = HfApi()
-        api.create_repo(args.hf_repo, exist_ok=True, private=args.hf_private)
-        base_rev = api.model_info(args.repo).sha
-        readme = out / "README.md"
-        readme.write_text(
-            README_TEMPLATE.format(
-                hf_repo=args.hf_repo,
-                r=args.lora_r,
-                alpha=args.lora_alpha,
-                base_rev=base_rev,
-                sha=sha,
-                n_hours=len(y),
-                freeze=freeze,
-                seed=args.seed,
-                val_h=args.val_tail_hours,
-                best_step=hist["best_step"],
-                best_val=best_val,
-                n_steps=args.n_steps,
-                lr=args.lr,
-                batch=args.batch,
-                tch=args.train_context_hours,
-                h=args.horizon,
-            )
-        )
-        for f in (adapter, out / "adapter_config.json", readme):
-            api.upload_file(
-                path_or_fileobj=str(f), path_in_repo=f.name, repo_id=args.hf_repo
-            )
-        rev = api.repo_info(args.hf_repo).sha
-        pointer = {
-            "adapter_repo_id": args.hf_repo,
-            "adapter_revision": rev,
-            "base_repo": args.repo,
-            "base_revision": base_rev,
-            "sha256": sha,
-        }
-        Path("docs/data/lora_adapter.json").write_text(
-            json.dumps(pointer, indent=2) + "\n"
-        )
-        logger.info(
-            "pushed to hf.co/%s @ %s + git pointer docs/data/lora_adapter.json",
-            args.hf_repo,
-            rev,
-        )
+        _push_to_hf(args, out, cfg, sha)
     return 0
 
 

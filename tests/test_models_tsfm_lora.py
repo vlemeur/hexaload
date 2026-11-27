@@ -184,34 +184,97 @@ def test_finetune_lora_val_tail_and_determinism(
     assert h1["losses"] == h2["losses"]  # same seed -> same run
 
 
-def test_adapter_load_mode_skips_training(
-    patched: FakePipe, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    # reference adapter: injected fake model with known lora_B
-    ref = _fresh_injected_pipe()
+def _write_adapter(tmp_path, r: int) -> tuple:
+    """Save an adapter (rank r, lora_B=0.5) + its config; return (path, sha)."""
+    import hashlib
+    import json
+
+    ref = _fresh_injected_pipe(r=r)
     ref_head = ref.model.head
     assert isinstance(ref_head, LoRALinear)
     with torch.no_grad():
         ref_head.lora_B.fill_(0.5)
     adapter_file = tmp_path / "adapter.safetensors"
     save_adapter(ref.model, adapter_file)
+    sha = hashlib.sha256(adapter_file.read_bytes()).hexdigest()
+    (tmp_path / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_repo": "mistralai/Timestral-209M",
+                "sha256": sha,
+                "hyperparams": {"lora_r": r, "lora_alpha": 2.0 * r},
+            }
+        )
+    )
+    return adapter_file, sha
+
+
+def test_adapter_load_mode_skips_training(
+    patched: FakePipe, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    adapter_file, _sha = _write_adapter(tmp_path, r=4)
 
     def _boom(*a, **k):
         raise RuntimeError("training must be skipped in adapter mode")
 
     monkeypatch.setattr(tsfm_lora, "finetune_lora", _boom)
-    m = TimestralLoRA(
-        adapter_path=str(adapter_file),
-        device="cpu",
-        lora_r=2,
-        lora_alpha=4.0,
-        context_hours=48,
-    )
+    # default lora_r=8 in the constructor: the rank must come from the config
+    m = TimestralLoRA(adapter_path=str(adapter_file), device="cpu", context_hours=48)
     X, y = make_xy()
     m.fit(y, X)  # must not call finetune_lora
     head = patched.model.head
     assert isinstance(head, LoRALinear)
+    assert head.lora_A.shape[0] == 4  # injected with the adapter's own rank
     assert torch.allclose(head.lora_B, torch.full_like(head.lora_B, 0.5))
     # predict still works through the pipe with the loaded adapter
     pred = m.predict(y.index[-8:], X.iloc[-8:])
     assert len(pred) == 8
+
+
+def test_adapter_sha256_mismatch_rejected(
+    patched: FakePipe, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import json
+
+    adapter_file, _sha = _write_adapter(tmp_path, r=2)
+    cfg = json.loads((tmp_path / "adapter_config.json").read_text())
+    cfg["sha256"] = "0" * 64
+    (tmp_path / "adapter_config.json").write_text(json.dumps(cfg))
+    monkeypatch.setattr(
+        TimestralLoRA, "_load", lambda self: setattr(self, "_pipe", patched)
+    )
+    m = TimestralLoRA(adapter_path=str(adapter_file), device="cpu", context_hours=48)
+    X, y = make_xy()
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        m.fit(y, X)
+
+
+def test_adapter_pointer_kwargs(tmp_path) -> None:
+    import json
+
+    from hexaload.models.tsfm_lora import adapter_pointer_kwargs
+
+    # no pointer committed yet -> {} (serving falls back to per-fit training)
+    assert adapter_pointer_kwargs(tmp_path / "lora_adapter.json") == {}
+
+    ptr = tmp_path / "lora_adapter.json"
+    ptr.write_text(
+        json.dumps(
+            {
+                "adapter_repo_id": "you/timestral-209m-lora-fr-load",
+                "adapter_revision": "abc123",
+                "base_repo": "mistralai/Timestral-209M",
+                "base_revision": "def456",
+                "sha256": "0" * 64,
+            }
+        )
+    )
+    # only the serving kwargs are forwarded (sha256/base_* stay in the file)
+    assert adapter_pointer_kwargs(ptr) == {
+        "adapter_repo_id": "you/timestral-209m-lora-fr-load",
+        "adapter_revision": "abc123",
+    }
+    # and they plug straight into the constructor
+    m = TimestralLoRA(device="cpu", **adapter_pointer_kwargs(ptr))
+    assert m.adapter_repo_id == "you/timestral-209m-lora-fr-load"
+    assert m.adapter_revision == "abc123"

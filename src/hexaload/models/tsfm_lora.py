@@ -20,10 +20,12 @@ Hugging Face.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -44,6 +46,30 @@ _LORA_INIT: dict[tuple, dict[str, torch.Tensor]] = {}
 
 # HF repo hosting the published production adapter (set once it exists)
 DEFAULT_ADAPTER_REPO: str | None = None
+
+# git pointer written by scripts/train_lora.py --push; read by the serving
+# entry points (scripts/forecast.py, scripts/site_curves.py)
+ADAPTER_POINTER_PATH = Path("docs/data/lora_adapter.json")
+
+
+def adapter_pointer_kwargs(path: str | Path = ADAPTER_POINTER_PATH) -> dict[str, Any]:
+    """Serving kwargs for :class:`TimestralLoRA` from the committed git pointer.
+
+    Returns ``{"adapter_repo_id", "adapter_revision"}`` once an adapter has
+    been pushed (``train_lora.py --push`` wrote the pointer), else ``{}`` —
+    callers then keep the per-fit training behaviour. Pure JSON read, no
+    network; the download happens later in ``_load_published_adapter``.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    ptr = json.loads(p.read_text())
+    kw: dict[str, Any] = {}
+    if ptr.get("adapter_repo_id"):
+        kw["adapter_repo_id"] = str(ptr["adapter_repo_id"])
+    if ptr.get("adapter_revision"):
+        kw["adapter_revision"] = str(ptr["adapter_revision"])
+    return kw
 
 
 class LoRALinear(nn.Module):
@@ -302,26 +328,48 @@ class TimestralLoRA(TimestralTSFM):
             )
 
     def _load_published_adapter(self) -> None:
-        self._ensure_injected()
+        # fetch adapter + its config (rank/alpha/sha256 live in the config, so the
+        # caller does not need to know them)
         if self.adapter_path is not None:
-            state = load_adapter_file(self.adapter_path)
+            d = Path(self.adapter_path).parent
+            adapter_file = Path(self.adapter_path)
         else:
             from huggingface_hub import snapshot_download
 
-            d = snapshot_download(
-                self.adapter_repo_id,
-                revision=self.adapter_revision,
-                allow_patterns=["adapter.safetensors", "adapter_config.json"],
+            d = Path(
+                snapshot_download(
+                    self.adapter_repo_id,
+                    revision=self.adapter_revision,
+                    allow_patterns=["adapter.safetensors", "adapter_config.json"],
+                )
             )
-            state = load_adapter_file(Path(d) / "adapter.safetensors")
+            adapter_file = d / "adapter.safetensors"
+        state = load_adapter_file(adapter_file)
         if not any("lora_" in k for k in state):
             raise ValueError(
                 f"adapter from {self._adapter_source} has no lora_ weights"
             )
+        cfg_path = d / "adapter_config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            hp = cfg.get("hyperparams", {})
+            if "lora_r" in hp:  # inject with the adapter's own rank/alpha
+                self.lora_r = int(hp["lora_r"])
+                self.lora_alpha = float(hp.get("lora_alpha", 2 * self.lora_r))
+            expected = cfg.get("sha256")
+            if expected is not None:
+                actual = hashlib.sha256(adapter_file.read_bytes()).hexdigest()
+                if actual != expected:
+                    raise ValueError(
+                        f"adapter sha256 mismatch: {actual} != {expected} "
+                        f"(base {cfg.get('base_repo')} may have changed)"
+                    )
+        self._ensure_injected()
         self._pipe.model.load_state_dict(state, strict=False)
         logger.info(
-            "timestral_lora: adapter loaded from %s — training skipped",
+            "timestral_lora: adapter loaded from %s (r=%d) — training skipped",
             self._adapter_source,
+            self.lora_r,
         )
 
     def fit(
