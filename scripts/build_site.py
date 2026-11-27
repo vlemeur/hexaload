@@ -88,6 +88,14 @@ def main() -> int:
         have = set(tuned["model"])
         tuned = pd.concat([tuned, tsfm[~tsfm["model"].isin(have)]])
     holdout = load_parquet(TUNING / "holdout.parquet")
+    # timestral_lora_209m is not in TUNABLE, so tune-eval never scores it: its
+    # 2026 hold-out lives in the side parquet (same summary schema) — merge it
+    # in; when a model appears in both, the tuned hold-out row wins
+    lora26 = load_parquet(RESULTS / "backtest_lora_2026.parquet")
+    if holdout is not None and lora26 is not None:
+        holdout = pd.concat([holdout, lora26[holdout.columns]]).drop_duplicates(
+            subset=["model"], keep="first"
+        )
     params_path = TUNING / "best_params.yaml"
     yaml.safe_load(params_path.read_text()) if params_path.exists() else {}
 

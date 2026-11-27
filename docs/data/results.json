@@ -438,6 +438,15 @@
    "crps_mean": 461.7319036814342,
    "crps_std": 182.276230288296,
    "crps_count": 11
+  },
+  {
+   "model": "timestral_lora_209m",
+   "mase_mean": 0.31099026255621154,
+   "mase_std": 0.41106512992653366,
+   "mase_count": 11,
+   "crps_mean": 549.4894064825827,
+   "crps_std": 712.0093621019112,
+   "crps_count": 11
   }
  ],
  "tuning": {

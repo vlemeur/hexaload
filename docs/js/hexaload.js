@@ -153,7 +153,7 @@ async function renderForecast(el) {
   el.innerHTML = `<p>Forecast for <b>${j.date}</b> — fit on data available at ${j.as_of} UTC, horizon 24 h.${hasRte ? "" : " (latest published day; RTE's curve appears once published)"}</p>
     ${hasRte ? "" : `<p class="hexa-note">RTE's D-1 forecast for ${j.date} is published later on ${prev.toISOString().slice(0, 10)} — the red curve appears here after the evening backfill. Recent RTE comparisons: see the accuracy section below.</p>`}
     <canvas id="chart-forecast"></canvas>`;
-  const palette = { timestral_209m: "#b39ddb", timestral_lora_209m: "#7e57c2", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
+  const palette = { timestral_209m: "#b39ddb", timestral_lora_209m: "#ffa726", chronos_bolt: "#ce93d8", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", xgb_features: "#4db6ac", ridge_features: "#f48fb1" };
   const pretty = { timestral_209m: "Timestral-209M", timestral_lora_209m: "Timestral-209M + LoRA", chronos_bolt: "Chronos-Bolt", hgb_features: "HGB", hgb_features_ewma_mondrian: "HGB + EWMA + Mondrian", xgb_features: "XGBoost", ridge_features: "Ridge" };
   const ds = [];
   for (const [name, m] of Object.entries(j.models || {})) {
@@ -229,7 +229,7 @@ async function renderAccuracy(el) {
   el.innerHTML = `<canvas id="chart-accuracy"></canvas>
     <h4>MASE per day (D-1) — lower is better</h4>${scoreTable("mase", 3)}
     <h4>CRPS per day, MW (D-1) — lower is better</h4>${scoreTable("crps", 0)}`;
-  const colors = { timestral_209m: "#b39ddb", timestral_lora_209m: "#7e57c2", hgb_features_ewma_mondrian: "#80cbc4", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  const colors = { timestral_209m: "#b39ddb", timestral_lora_209m: "#ffa726", hgb_features_ewma_mondrian: "#80cbc4", hgb_features: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
   const dashes = { timestral_209m: [6, 4], timestral_lora_209m: [], hgb_features_ewma_mondrian: [6, 4], hgb_features: [6, 4], ridge_features: [2, 3], rte_prevision_j1: [] };
   const ds = [{ label: "actual", data: actual, borderColor: "#e6e6e6", borderWidth: 2.5, pointRadius: 0, tension: 0.15 }];
   for (const [name, s] of Object.entries(series)) {
@@ -269,7 +269,7 @@ async function renderMonitoring(statusEl, cusumEl, maeEl) {
   if (!days.length) { cusumEl.innerHTML = "<p><em>No scored days yet.</em></p>"; maeEl.innerHTML = ""; return; }
   const labels = days.map(d => d.date.slice(5));
   const models = [...new Set(days.flatMap(d => Object.keys(d).filter(k => k.endsWith("__mae")).map(k => k.slice(0, -5))))];
-  const palette = { timestral_209m: "#b39ddb", timestral_lora_209m: "#7e57c2", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
+  const palette = { timestral_209m: "#b39ddb", timestral_lora_209m: "#ffa726", hgb_features: "#80cbc4", hgb_features_ewma_mondrian: "#80cbc4", ridge_features: "#f48fb1", rte_prevision_j1: "#ef5350" };
   // CUSUM chart
   const cusumDs = models.filter(m => days.some(d => d[m + "__cusum"] != null)).map(m => ({
     label: m, data: days.map(d => d[m + "__cusum"] ?? null),
